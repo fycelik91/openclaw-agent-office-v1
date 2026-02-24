@@ -1,471 +1,688 @@
 (() => {
+  'use strict';
+
   const canvas = document.getElementById("office-canvas");
   const ctx = canvas.getContext("2d");
   const feedEl = document.getElementById("live-feed");
   const statusEl = document.getElementById("agent-status");
   const connPill = document.getElementById("conn-pill");
 
+  // ── CONFIG ───────────────────────────────────────────────
+  const TILE = 20;
   const SOURCE_COLORS = { slack: "#41c7f4", telegram: "#6dde8a", openclaw: "#ffd166" };
-  const STATUS_COLORS = { assigned: "#ffd166", started: "#64d2ff", done: "#48d597", failed: "#ff6262" };
-  const STATE_LABELS = {
-    idle_wander: "Idle/Wander",
-    idle_chat: "Idle/Chat",
-    task_notified: "Notified",
-    task_commute: "Commuting",
-    task_working: "Working",
-    task_done: "Done",
-    task_failed: "Failed",
-    confused: "Confused"
+  const STATUS_COLORS  = { assigned: "#ffd166", started: "#64d2ff", done: "#48d597", failed: "#ff6262" };
+  const STATE_LABELS   = {
+    idle_wander: "Idle/Wander", idle_chat: "Idle/Chat",
+    task_notified: "Notified",  task_commute: "Commuting",
+    task_working: "Working",    task_done: "Done",   task_failed: "Failed"
   };
 
-  const AGENTS = [
-    {
-      id: "main",
-      name: "Ekrem",
-      role: "Orchestrator",
-      color: "#f4a261",
-      desk: { x: 250, y: 170 },
-      pos: { x: 260, y: 210 },
-      localWander: [{ x: 230, y: 220 }, { x: 310, y: 240 }, { x: 350, y: 280 }]
-    },
-    {
-      id: "coder",
-      name: "Mithat",
-      role: "Coder",
-      color: "#7bdff2",
-      desk: { x: 955, y: 170 },
-      pos: { x: 920, y: 220 },
-      localWander: [{ x: 890, y: 240 }, { x: 840, y: 290 }, { x: 760, y: 330 }]
-    },
-    {
-      id: "marketer",
-      name: "Fikret",
-      role: "Marketer",
-      color: "#ff7f7f",
-      desk: { x: 965, y: 330 },
-      pos: { x: 920, y: 390 },
-      localWander: [{ x: 880, y: 380 }, { x: 810, y: 420 }, { x: 740, y: 390 }]
-    },
-    {
-      id: "daily",
-      name: "Pelin",
-      role: "Daily",
-      color: "#c2f970",
-      desk: { x: 260, y: 520 },
-      pos: { x: 310, y: 470 },
-      localWander: [{ x: 330, y: 470 }, { x: 420, y: 460 }, { x: 500, y: 430 }]
-    },
-    {
-      id: "kalshi",
-      name: "Mehmet",
-      role: "Investor",
-      color: "#b19cd9",
-      desk: { x: 970, y: 530 },
-      pos: { x: 920, y: 500 },
-      localWander: [{ x: 900, y: 500 }, { x: 830, y: 470 }, { x: 740, y: 500 }]
-    }
-  ].map((a) => ({
-    ...a,
-    state: "idle_wander",
-    queue: [],
-    currentTask: null,
-    bubble: null,
-    target: null,
-    speed: 1.05,
-    stateUntil: 0,
-    notifyColor: "#ffd166",
-    pulse: 0
-  }));
+  // ── FLOOR PATTERN (draw once) ────────────────────────────
+  const floorOff = document.createElement("canvas");
+  floorOff.width = TILE * 2; floorOff.height = TILE * 2;
+  const fctx = floorOff.getContext("2d");
+  fctx.fillStyle = "#0d1620"; fctx.fillRect(0, 0, TILE * 2, TILE * 2);
+  fctx.fillStyle = "#0a1218"; fctx.fillRect(0, 0, TILE, TILE);
+  fctx.fillStyle = "#0a1218"; fctx.fillRect(TILE, TILE, TILE, TILE);
+  const floorPattern = ctx.createPattern(floorOff, "repeat");
 
-  const AGENT_BY_ID = Object.fromEntries(AGENTS.map((a) => [a.id, a]));
-  const loungePoints = [{ x: 560, y: 350 }, { x: 620, y: 390 }, { x: 690, y: 430 }];
-
-  const bubbles = {
-    main: ["Takim, siradaki is kimde?", "Oncelik: etkisi yuksek isler.", "Bu gorevi en dogru agente verelim."],
-    coder: ["Build yesil.", "Loglar biraz supheli.", "Deploy oncesi son kontrol."],
-    marketer: ["CTR bugun iyi.", "Bu kreatif daha guclu.", "Retention trendine bakalim."],
-    daily: ["Bir saniye... notlar nerede?", "Tamam sakinim, hallediyorum.", "Takvim bende, kahve sende?"],
-    kalshi: ["Volatilite yukseliyor.", "Risk/odul oranina bakalim.", "Bu giris icin erken olabilir."]
+  // ── ROOMS ────────────────────────────────────────────────
+  // Canvas: 1280 × 720
+  // Layout: top row (conference | CEO Office | kitchen) + right lounge strip
+  //         bottom row (4 agent rooms) + open hallway below
+  const ROOMS = {
+    conference: { x: 16,   y: 16,  w: 232, h: 182, label: "Conference",  lc: "#7a8faa", bg: "rgba(10,18,28,0.82)"                          },
+    ceo:        { x: 264,  y: 16,  w: 292, h: 202, label: "CEO Office",  lc: "#f9d65c", bg: "rgba(14,18,36,0.88)", agentId: "main"          },
+    kitchen:    { x: 572,  y: 16,  w: 224, h: 182, label: "Kitchen",     lc: "#8899bb", bg: "rgba(10,20,26,0.82)"                           },
+    code:       { x: 16,   y: 258, w: 232, h: 196, label: "CODE",        lc: "#7bdff2", bg: "rgba(8,18,30,0.85)",  agentId: "coder"         },
+    mkt:        { x: 264,  y: 258, w: 232, h: 196, label: "MKT",         lc: "#ff7faf", bg: "rgba(22,8,26,0.85)",  agentId: "marketer"      },
+    ops:        { x: 512,  y: 258, w: 232, h: 196, label: "OPS",         lc: "#c2f970", bg: "rgba(8,22,14,0.85)",  agentId: "daily"         },
+    trd:        { x: 760,  y: 258, w: 232, h: 196, label: "TRD",         lc: "#b19cd9", bg: "rgba(16,8,28,0.85)",  agentId: "kalshi"        },
+    lounge:     { x: 1016, y: 16,  w: 248, h: 480, label: "Lounge",      lc: "#6dde8a", bg: "rgba(8,20,14,0.82)"                           }
   };
 
-  const feed = [];
-  const seenEventIds = new Set();
-  let lastEventTs = new Date(0).toISOString();
-
-  function isoRect(x, y, w, h, color) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.transform(1, -0.34, 1, 0.34, 0, 0);
-    ctx.fillStyle = color;
-    ctx.fillRect(-w / 2, -h / 2, w, h);
-    ctx.restore();
-  }
-
-  function isoShadow(x, y, w, h) {
-    ctx.save();
-    ctx.globalAlpha = 0.22;
-    isoRect(x + 6, y + 9, w, h, "#000");
-    ctx.restore();
-  }
-
-  function drawWallBand() {
-    ctx.fillStyle = "#1a2a3a";
-    ctx.fillRect(110, 92, 1060, 36);
-    ctx.fillRect(110, 602, 1060, 20);
-    ctx.fillStyle = "#263b50";
-    ctx.fillRect(110, 126, 1060, 8);
-    ctx.fillRect(110, 594, 1060, 6);
-  }
-
-  function drawDecor() {
-    const desks = [
-      { x: 245, y: 165, label: "CEO", tone: "#35526d" },
-      { x: 955, y: 165, label: "CODE", tone: "#2f4f6b" },
-      { x: 965, y: 330, label: "MKT", tone: "#5f425a" },
-      { x: 260, y: 520, label: "OPS", tone: "#4b5a42" },
-      { x: 970, y: 530, label: "TRD", tone: "#51466d" }
-    ];
-
-    desks.forEach((d) => {
-      isoShadow(d.x, d.y, 126, 62);
-      isoRect(d.x, d.y, 126, 62, d.tone);
-      ctx.fillStyle = "#dce9f9";
-      ctx.font = "12px monospace";
-      ctx.fillText(d.label, d.x - 18, d.y + 4);
-    });
-
-    // lounge island
-    isoShadow(620, 390, 280, 170);
-    isoRect(620, 390, 280, 170, "#314d63");
-    ctx.fillStyle = "#c8d9ee";
-    ctx.font = "13px monospace";
-    ctx.fillText("LOUNGE", 585, 395);
-
-    // coffee point
-    isoShadow(510, 505, 90, 48);
-    isoRect(510, 505, 90, 48, "#4d5b68");
-    ctx.fillStyle = "#d7e4ef";
-    ctx.fillText("CAFE", 488, 509);
-
-    // plants and props (anchored to ground)
-    [
-      { x: 160, y: 575 },
-      { x: 1115, y: 140 },
-      { x: 1120, y: 585 },
-      { x: 170, y: 135 }
-    ].forEach((p) => {
-      isoShadow(p.x, p.y, 28, 28);
-      isoRect(p.x, p.y, 28, 28, "#2f6f4d");
-    });
-
-    // monitor glows
-    ctx.fillStyle = "#6de2ff33";
-    ctx.fillRect(900, 130, 120, 34);
-    ctx.fillStyle = "#ff8aa233";
-    ctx.fillRect(905, 300, 120, 26);
-    ctx.fillStyle = "#90ffb133";
-    ctx.fillRect(195, 490, 120, 30);
-    ctx.fillStyle = "#c8b0ff33";
-    ctx.fillRect(905, 500, 120, 30);
-  }
-
-  function drawOffice() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // floor base
-    isoRect(640, 390, 1040, 620, "#213548");
-    isoRect(640, 390, 1000, 580, "#2b455d");
-
-    // simple tile cues to remove floating feeling
-    ctx.strokeStyle = "#36556f66";
-    for (let y = 170; y <= 580; y += 34) {
-      ctx.beginPath();
-      ctx.moveTo(160, y);
-      ctx.lineTo(1120, y);
-      ctx.stroke();
+  function getDeskPos(agentId) {
+    for (const r of Object.values(ROOMS)) {
+      if (r.agentId === agentId) return { x: r.x + r.w * 0.5, y: r.y + r.h * 0.58 };
     }
-    drawWallBand();
-    drawDecor();
+    return { x: 500, y: 360 };
   }
 
-  function drawAgent(agent, now) {
-    const bob = Math.sin(now / 140 + agent.pos.x) * 1.1;
-    const pulse = agent.pulse > 0 ? Math.sin(now / 45) * 2.5 + 5 : 0;
+  function getRoomWander(agentId) {
+    for (const r of Object.values(ROOMS)) {
+      if (r.agentId === agentId) {
+        return [
+          { x: r.x + r.w * 0.22, y: r.y + r.h * 0.82 },
+          { x: r.x + r.w * 0.50, y: r.y + r.h * 0.88 },
+          { x: r.x + r.w * 0.78, y: r.y + r.h * 0.82 },
+          { x: r.x + r.w * 0.22, y: r.y + r.h * 0.70 },
+          { x: r.x + r.w * 0.78, y: r.y + r.h * 0.70 },
+        ];
+      }
+    }
+    return [];
+  }
 
-    if (pulse > 0) {
-      ctx.beginPath();
-      ctx.fillStyle = `${agent.notifyColor}55`;
-      ctx.arc(agent.pos.x, agent.pos.y + 4, 14 + pulse, 0, Math.PI * 2);
-      ctx.fill();
+  // Hallway / common wander points
+  const HALL_WANDER = [
+    { x: 130, y: 238 }, { x: 380, y: 238 }, { x: 630, y: 238 }, { x: 870, y: 238 },
+    { x: 130, y: 500 }, { x: 380, y: 500 }, { x: 630, y: 500 }, { x: 870, y: 500 },
+    { x: 1065, y: 180 }, { x: 1130, y: 320 }, { x: 1185, y: 430 }, { x: 1060, y: 460 },
+  ];
+
+  // ── AGENTS ───────────────────────────────────────────────
+  const AGENT_DEFS = [
+    { id: "main",     name: "Ekrem",  role: "Orchestrator", color: "#f4a261" },
+    { id: "coder",    name: "Mithat", role: "Coder",        color: "#7bdff2" },
+    { id: "marketer", name: "Fikret", role: "Marketer",     color: "#ff7faf" },
+    { id: "daily",    name: "Pelin",  role: "Daily",        color: "#c2f970" },
+    { id: "kalshi",   name: "Mehmet", role: "Investor",     color: "#b19cd9" }
+  ];
+
+  const BUBBLES = {
+    main:     ["Öncelik: yüksek etki.", "Bu görevi kime versek?", "Takım ne yapıyor?", "Plan hazır mı?"],
+    coder:    ["Build yeşil.", "Loglar şüpheli...", "Deploy öncesi son kontrol.", "Test geçti."],
+    marketer: ["CTR bugün iyi.", "Bu kreatif güçlü.", "Retention trendine bakalım.", "A/B testi hazır."],
+    daily:    ["Notlar nerede?", "Takvim bende, kahve sende?", "Hallediyorum...", "Hatırlatıcı kurdum."],
+    kalshi:   ["Volatilite yükseliyor.", "Risk/ödül oranı?", "Bu giriş için erken.", "Pozisyon açıldı."]
+  };
+
+  const AGENTS = AGENT_DEFS.map(def => {
+    const desk = getDeskPos(def.id);
+    return {
+      ...def,
+      desk:        { ...desk },
+      pos:         { ...desk },
+      state:       "idle_wander",
+      queue:       [],
+      currentTask: null,
+      bubble:      null,
+      target:      null,
+      speed:       1.2 + Math.random() * 0.25,
+      stateUntil:  0,
+      notifyColor: "#ffd166",
+      pulse:       0
+    };
+  });
+
+  const AGENT_BY_ID = Object.fromEntries(AGENTS.map(a => [a.id, a]));
+
+  // ── DRAW HELPERS ─────────────────────────────────────────
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+  }
+
+  function drawRoom(room) {
+    // Fill
+    ctx.fillStyle = room.bg;
+    ctx.fillRect(room.x, room.y, room.w, room.h);
+
+    // CEO subtle golden inner glow
+    if (room.agentId === "main") {
+      ctx.fillStyle = "rgba(249,214,92,0.04)";
+      ctx.fillRect(room.x, room.y, room.w, room.h);
     }
 
-    ctx.fillStyle = "#0c141d";
-    ctx.fillRect(agent.pos.x - 7, agent.pos.y + 8, 15, 4);
+    // Border
+    ctx.strokeStyle = room.lc + "55";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(room.x + 1, room.y + 1, room.w - 2, room.h - 2);
 
+    // Label badge
+    const lblW = room.label.length * 8 + 10;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(room.x + 6, room.y + 4, lblW, 16);
+    ctx.fillStyle = room.lc;
+    ctx.font = "bold 11px monospace";
+    ctx.fillText(room.label, room.x + 9, room.y + 16);
+  }
+
+  // Standard agent desk + monitor
+  function drawAgentDesk(cx, cy, agent) {
+    const dw = 78, dh = 26;
+    // Desk surface
+    ctx.fillStyle = "#7a5c38";
+    ctx.fillRect(cx - dw / 2, cy, dw, dh);
+    ctx.fillStyle = "#5a3c20";
+    ctx.fillRect(cx - dw / 2, cy + dh, dw, 4);
+
+    // Monitor
+    ctx.fillStyle = "#1e2c3e";
+    ctx.fillRect(cx - 14, cy - 22, 28, 20);
     ctx.fillStyle = agent.color;
-    ctx.fillRect(agent.pos.x - 5, agent.pos.y - 8 + bob, 10, 14);
-    ctx.fillStyle = "#f4f7fb";
-    ctx.fillRect(agent.pos.x - 3, agent.pos.y - 16 + bob, 7, 7);
+    ctx.globalAlpha = 0.65;
+    ctx.fillRect(cx - 12, cy - 20, 24, 16);
+    ctx.globalAlpha = 1;
+    // Stand
+    ctx.fillStyle = "#2a3545";
+    ctx.fillRect(cx - 3, cy - 2, 6, 4);
+    // Ambient glow
+    ctx.fillStyle = agent.color;
+    ctx.globalAlpha = 0.06;
+    ctx.fillRect(cx - 22, cy - 28, 44, 32);
+    ctx.globalAlpha = 1;
 
-    if (agent.state === "task_working") {
-      ctx.fillStyle = "#f9d65c";
-      ctx.fillRect(agent.pos.x + 8, agent.pos.y - 18, 3, 3);
-      ctx.fillRect(agent.pos.x + 12, agent.pos.y - 22, 2, 2);
-    }
-
-    ctx.fillStyle = "#dce9f9";
-    ctx.font = "11px monospace";
-    ctx.fillText(agent.name, agent.pos.x - 16, agent.pos.y + 22);
-
-    if (agent.bubble && agent.bubble.until > now) {
-      const text = agent.bubble.text;
-      const w = Math.max(88, text.length * 6 + 10);
-      ctx.fillStyle = "#0f1822e0";
-      ctx.fillRect(agent.pos.x - w / 2, agent.pos.y - 44, w, 18);
-      ctx.fillStyle = "#cfe0f6";
-      ctx.font = "11px monospace";
-      ctx.fillText(text, agent.pos.x - w / 2 + 6, agent.pos.y - 31);
+    // Role-specific desk item
+    if (agent.id === "coder") {
+      // Coffee mug
+      ctx.fillStyle = "#8B4513"; ctx.fillRect(cx + 30, cy + 5, 8, 12);
+      ctx.fillStyle = "#c0956a"; ctx.fillRect(cx + 31, cy + 6, 6, 4);
+    } else if (agent.id === "marketer") {
+      // Bar chart
+      [[0, "#ff9faf", 8], [6, "#ff5577", 14], [13, "#ff9faf", 6]].forEach(([dx, c, h]) => {
+        ctx.fillStyle = c; ctx.fillRect(cx + 28 + dx, cy + dh - h, 4, h);
+      });
+    } else if (agent.id === "kalshi") {
+      // Line chart
+      ctx.strokeStyle = "#c2f970"; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx + 26, cy + 20); ctx.lineTo(cx + 32, cy + 12);
+      ctx.lineTo(cx + 38, cy + 16); ctx.lineTo(cx + 44, cy + 8);
+      ctx.stroke();
+    } else if (agent.id === "daily") {
+      // Sticky note
+      ctx.fillStyle = "#f9d65c"; ctx.fillRect(cx + 29, cy + 4, 12, 12);
+      ctx.fillStyle = "#e0b840"; ctx.fillRect(cx + 30, cy + 5, 10, 1);
     }
   }
 
-  function moveToward(agent, target) {
-    const dx = target.x - agent.pos.x;
-    const dy = target.y - agent.pos.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist <= agent.speed) {
-      agent.pos.x = target.x;
-      agent.pos.y = target.y;
-      return true;
+  // CEO large desk (called with ROOMS.ceo)
+  function drawCEODesk(room) {
+    const cx = room.x + room.w * 0.5;
+    const cy = room.y + room.h * 0.56;
+
+    // Bookcase on left wall
+    ctx.fillStyle = "#6b4c2a";
+    ctx.fillRect(room.x + 8, room.y + 24, 22, room.h - 48);
+    ctx.fillStyle = "#5a3c1a";
+    const bookColors = ["#4a7fc4", "#c44a4a", "#4ac48a", "#c4b04a", "#8a4ac4", "#c4674a"];
+    bookColors.forEach((bc, i) => {
+      ctx.fillStyle = bc;
+      ctx.fillRect(room.x + 10, room.y + 28 + i * 26, 18, 18);
+    });
+
+    // Main wide desk
+    ctx.fillStyle = "#8a6a42";
+    ctx.fillRect(cx - 72, cy, 144, 32);
+    // L-extension (right side)
+    ctx.fillRect(cx + 52, cy - 36, 36, 38);
+    // Shadow edge
+    ctx.fillStyle = "#5a3c20";
+    ctx.fillRect(cx - 72, cy + 32, 144, 4);
+    ctx.fillRect(cx + 52, cy + 2, 36, 4);
+
+    // 2 monitors
+    [{ x: cx - 32, c: "#3a8ff4" }, { x: cx + 20, c: "#f4a261" }].forEach(({ x: mx, c }) => {
+      ctx.fillStyle = "#1e2c3e"; ctx.fillRect(mx - 14, cy - 22, 28, 20);
+      ctx.fillStyle = c; ctx.globalAlpha = 0.72;
+      ctx.fillRect(mx - 12, cy - 20, 24, 16);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#2a3545"; ctx.fillRect(mx - 3, cy - 3, 6, 5);
+      ctx.fillStyle = c; ctx.globalAlpha = 0.06;
+      ctx.fillRect(mx - 22, cy - 30, 44, 34); ctx.globalAlpha = 1;
+    });
+
+    // Tablet on extension desk
+    ctx.fillStyle = "#2a3a50"; ctx.fillRect(cx + 58, cy - 28, 22, 14);
+    ctx.fillStyle = "#3a5a7a"; ctx.globalAlpha = 0.8;
+    ctx.fillRect(cx + 59, cy - 27, 20, 12); ctx.globalAlpha = 1;
+
+    // Small plant on desk corner
+    ctx.fillStyle = "#2a5a1a"; ctx.fillRect(cx - 72 + 4, cy + 4, 12, 10);
+    ctx.fillStyle = "#3a8a2a"; ctx.fillRect(cx - 72 + 2, cy - 4, 16, 10);
+  }
+
+  function drawConference(room) {
+    const cx = room.x + room.w * 0.5;
+    const cy = room.y + room.h * 0.58;
+    // Oval table
+    ctx.fillStyle = "#6b4010";
+    ctx.beginPath(); ctx.ellipse(cx, cy, 84, 44, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#8a5a22";
+    ctx.beginPath(); ctx.ellipse(cx - 8, cy - 7, 54, 25, -0.15, 0, Math.PI * 2); ctx.fill();
+    // Chairs
+    [[-80, 0], [80, 0], [-46, -52], [46, -52], [-46, 52], [46, 52]].forEach(([dx, dy]) => {
+      ctx.fillStyle = "#1e2e40"; ctx.fillRect(cx + dx - 11, cy + dy - 11, 22, 22);
+      ctx.fillStyle = "#2a4050"; ctx.fillRect(cx + dx - 9, cy + dy - 9, 18, 14);
+    });
+    // Projector screen on back wall
+    ctx.fillStyle = "#e8e8e0"; ctx.fillRect(room.x + 20, room.y + 24, room.w - 40, 18);
+    ctx.fillStyle = "#aabbcc"; ctx.fillRect(room.x + 22, room.y + 26, room.w - 44, 14);
+  }
+
+  function drawKitchen(room) {
+    const { x, y, w, h } = room;
+    // Counter tops (L-shape)
+    ctx.fillStyle = "#c8c8c0";
+    ctx.fillRect(x + 8, y + 24, w - 16, 28);     // top counter
+    ctx.fillRect(x + 8, y + 24, 28, h - 44);      // left counter
+    ctx.fillStyle = "#a0a098";
+    ctx.fillRect(x + 8, y + 51, w - 16, 3);
+    ctx.fillRect(x + 35, y + 24, 3, h - 44);
+
+    // Microwave
+    ctx.fillStyle = "#222"; ctx.fillRect(x + 38, y + 30, 54, 20);
+    ctx.fillStyle = "#333"; ctx.fillRect(x + 40, y + 32, 40, 14);
+    ctx.fillStyle = "#ff3300"; ctx.globalAlpha = 0.9;
+    ctx.fillRect(x + 82, y + 35, 8, 8); ctx.globalAlpha = 1;
+
+    // Fridge
+    ctx.fillStyle = "#c0c0c8"; ctx.fillRect(x + w - 44, y + 25, 32, h - 46);
+    const fh = Math.floor((h - 56) / 2);
+    ctx.fillStyle = "#aaa";
+    ctx.fillRect(x + w - 42, y + 28, 28, fh);
+    ctx.fillRect(x + w - 42, y + 30 + fh, 28, fh);
+    ctx.fillStyle = "#888";
+    ctx.fillRect(x + w - 20, y + 40, 3, 28);
+    ctx.fillRect(x + w - 20, y + 40 + fh + 4, 3, 22);
+
+    // Coffee machine on counter
+    ctx.fillStyle = "#1a1a1a"; ctx.fillRect(x + 40, y + 56, 30, 36);
+    ctx.fillStyle = "#333"; ctx.fillRect(x + 42, y + 58, 26, 20);
+    ctx.fillStyle = "#ff6600"; ctx.globalAlpha = 0.5;
+    ctx.beginPath(); ctx.arc(x + 55, y + 82, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawLounge(room) {
+    const { x, y, w, h } = room;
+
+    // Sofa
+    ctx.fillStyle = "#1e3a52";
+    ctx.fillRect(x + 14, y + 28, w - 28, 48);
+    ctx.fillStyle = "#2a4f6e";
+    ctx.fillRect(x + 14, y + 28, w - 28, 14);  // back
+    ctx.fillRect(x + 14, y + 28, 14, 48);        // left arm
+    ctx.fillRect(x + w - 28, y + 28, 14, 48);    // right arm
+    ctx.fillStyle = "#1a3044";
+    ctx.fillRect(x + 28, y + 42, w - 56, 26);    // seat cushion
+
+    // Coffee table
+    ctx.fillStyle = "#6b4c2a"; ctx.fillRect(x + 26, y + 88, w - 52, 20);
+    ctx.fillStyle = "#5a3c1a"; ctx.fillRect(x + 26, y + 107, w - 52, 3);
+
+    // Plant (tree)
+    ctx.fillStyle = "#2a1a08"; ctx.fillRect(x + 14, y + 122, 18, 26);
+    ctx.fillStyle = "#1a4a1a"; ctx.fillRect(x + 8,  y + 96,  30, 28);
+    ctx.fillStyle = "#246a24"; ctx.fillRect(x + 12, y + 80,  22, 20);
+    ctx.fillStyle = "#2a7a2a"; ctx.fillRect(x + 16, y + 70,  14, 12);
+    ctx.fillStyle = "#48a848"; ctx.fillRect(x + 19, y + 64,  8,  8);
+
+    // Ping pong table
+    const ptY = y + h - 212;
+    ctx.fillStyle = "#0a4a1a"; ctx.fillRect(x + 14, ptY, w - 28, 84);
+    ctx.fillStyle = "#1a6b2a"; ctx.globalAlpha = 0.6;
+    ctx.fillRect(x + 14, ptY, w - 28, 84); ctx.globalAlpha = 1;
+    // Net
+    ctx.strokeStyle = "rgba(255,255,255,0.65)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x + 14, ptY + 42); ctx.lineTo(x + w - 14, ptY + 42); ctx.stroke();
+    // Center line
+    ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x + w / 2, ptY); ctx.lineTo(x + w / 2, ptY + 84); ctx.stroke();
+    // Ball (small circle)
+    ctx.fillStyle = "#ffffaa"; ctx.globalAlpha = 0.8;
+    ctx.beginPath(); ctx.arc(x + w * 0.35, ptY + 22, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#6dde8a"; ctx.font = "bold 9px monospace";
+    ctx.textAlign = "center"; ctx.fillText("PING PONG", x + w / 2, ptY + 98); ctx.textAlign = "left";
+
+    // Ideas board (whiteboard)
+    const ibY = y + h - 118;
+    ctx.fillStyle = "#eeeeea"; ctx.fillRect(x + 14, ibY, w - 28, 72);
+    ctx.fillStyle = "rgba(0,0,0,0.08)"; ctx.fillRect(x + 14, ibY, w - 28, 4);
+    // Lines
+    ctx.strokeStyle = "#3366ff"; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(x + 20, ibY + 16); ctx.lineTo(x + 66, ibY + 16); ctx.stroke();
+    ctx.strokeStyle = "#ff4444"; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(x + 20, ibY + 30); ctx.lineTo(x + 72, ibY + 30); ctx.stroke();
+    ctx.strokeStyle = "#44bb44"; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(x + 20, ibY + 44); ctx.lineTo(x + 56, ibY + 44); ctx.stroke();
+    // Green box
+    ctx.fillStyle = "#2d7a4e"; ctx.fillRect(x + w - 52, ibY + 10, 36, 36);
+    ctx.fillStyle = "#3a9a62"; ctx.fillRect(x + w - 50, ibY + 12, 32, 32);
+    ctx.fillStyle = "#8899aa"; ctx.font = "bold 9px monospace";
+    ctx.textAlign = "center"; ctx.fillText("IDEAS", x + w / 2, ibY + 88); ctx.textAlign = "left";
+  }
+
+  // ── SPRITE ───────────────────────────────────────────────
+  function drawSprite(agent, now) {
+    const { pos, color, name, state, bubble, pulse, notifyColor } = agent;
+    const x = Math.round(pos.x);
+    const y = Math.round(pos.y);
+    const isMoving = (state === "idle_wander" || state === "task_commute") && agent.target;
+    const bob   = state === "task_working" ? 0 : Math.sin(now / 290 + pos.x * 0.022) * 1.8;
+    const legA  = isMoving ? Math.sin(now / 110) * 3 : 0;
+    const bx = x - 9;
+    const by = y - 26 + bob;
+
+    // Shadow
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.beginPath(); ctx.ellipse(x, y + 4, 9, 3, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Legs
+    ctx.fillStyle = "#2a3040";
+    ctx.fillRect(bx + 4, by + 19, 5, 9 + legA);
+    ctx.fillRect(bx + 10, by + 19, 5, 9 - legA);
+
+    // Body
+    ctx.fillStyle = color; ctx.fillRect(bx + 2, by + 8, 14, 12);
+
+    // Arms
+    ctx.fillStyle = color;
+    if (state === "task_working") {
+      ctx.fillRect(bx - 1, by + 8,  4, 6);
+      ctx.fillRect(bx + 15, by + 8, 4, 6);
+    } else {
+      ctx.fillRect(bx - 2, by + 10, 4, 8);
+      ctx.fillRect(bx + 16, by + 10, 4, 8);
     }
+
+    // Head
+    ctx.fillStyle = "#f0c89a"; ctx.fillRect(bx + 4, by, 10, 10);
+    // Hair
+    ctx.fillStyle = "#3a2a18"; ctx.fillRect(bx + 4, by, 10, 3);
+    // Eyes
+    ctx.fillStyle = "#1a1020";
+    ctx.fillRect(bx + 6, by + 4, 2, 2);
+    ctx.fillRect(bx + 10, by + 4, 2, 2);
+
+    // Working sparkle
+    if (state === "task_working") {
+      ctx.fillStyle = "#f9d65c";
+      ctx.fillRect(bx + 18, by - 5,  3, 3);
+      ctx.fillRect(bx + 22, by - 9,  2, 2);
+      ctx.fillRect(bx + 20, by - 12, 2, 2);
+    }
+
+    // Pulse ring
+    if (pulse > 0.02) {
+      ctx.strokeStyle = notifyColor;
+      ctx.globalAlpha = pulse * 0.7;
+      ctx.lineWidth = 2;
+      const r = 16 + (1 - pulse) * 14;
+      ctx.beginPath(); ctx.arc(x, y - 10, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // Name
+    ctx.fillStyle = "#b8cede"; ctx.font = "10px monospace";
+    ctx.textAlign = "center"; ctx.fillText(name, x, y + 18); ctx.textAlign = "left";
+
+    // Speech bubble
+    if (bubble && bubble.until > now) {
+      const txt = bubble.text;
+      const tw = Math.max(65, txt.length * 5.8 + 14);
+      const bbx = x - tw / 2;
+      const bby = by - 20;
+      ctx.fillStyle = "#0c1724ee"; ctx.strokeStyle = "#3a5878"; ctx.lineWidth = 1;
+      rr(bbx, bby - 16, tw, 16, 3); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#0c1724ee";
+      ctx.beginPath();
+      ctx.moveTo(x - 4, bby); ctx.lineTo(x + 4, bby); ctx.lineTo(x, bby + 5);
+      ctx.fill();
+      ctx.fillStyle = "#a8c0d8"; ctx.font = "9px monospace";
+      ctx.textAlign = "center"; ctx.fillText(txt, x, bby - 4); ctx.textAlign = "left";
+    }
+  }
+
+  // ── STATE MACHINE ────────────────────────────────────────
+  function moveToward(agent, target) {
+    const dx = target.x - agent.pos.x, dy = target.y - agent.pos.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= agent.speed) { agent.pos.x = target.x; agent.pos.y = target.y; return true; }
     agent.pos.x += (dx / dist) * agent.speed;
     agent.pos.y += (dy / dist) * agent.speed;
     return false;
   }
 
-  function setBubble(agent, text, ms = 2200) {
+  function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+  function pickIdlePoint(agent) {
+    if (Math.random() < 0.22) return { ...rand(HALL_WANDER) };
+    const pts = getRoomWander(agent.id);
+    return { ...(pts.length ? rand(pts) : rand(HALL_WANDER)) };
+  }
+
+  function setBubble(agent, text, ms = 2100) {
     agent.bubble = { text, until: performance.now() + ms };
   }
 
+  function scheduleIdle(agent) {
+    const now = performance.now();
+    if (Math.random() < 0.28) {
+      agent.state = "idle_chat";
+      setBubble(agent, rand(BUBBLES[agent.id]));
+      agent.stateUntil = now + 1400 + Math.random() * 1700;
+      agent.target = null;
+    } else {
+      agent.state = "idle_wander";
+      agent.target = pickIdlePoint(agent);
+      agent.stateUntil = now + 2000 + Math.random() * 2800;
+    }
+  }
+
+  function assignTask(agent, evt) {
+    if (agent.currentTask?.taskId === evt.taskId) return;
+    if (agent.state === "task_working") { agent.queue.push(evt); return; }
+    agent.currentTask = evt;
+    agent.state = "task_notified";
+    agent.notifyColor = SOURCE_COLORS[evt.source] || "#ffd166";
+    agent.pulse = 1;
+    setBubble(agent, `${evt.source}: ${(evt.title || "task").slice(0, 22)}`, 1700);
+    agent.stateUntil = performance.now() + 850;
+  }
+
+  const feed = [];
+  const seenEventIds = new Set();
+  let lastEventTs = new Date(0).toISOString();
+
+  function applyEvent(evt) {
+    if (!evt?.agentId || !evt?.status) return;
+    if (evt.type === "hello" || evt.type === "ping") return;
+    if (evt.eventId && seenEventIds.has(evt.eventId)) return;
+    if (evt.eventId) seenEventIds.add(evt.eventId);
+    if (evt.timestamp > lastEventTs) lastEventTs = evt.timestamp;
+    enqueueFeed(evt);
+    const agent = AGENT_BY_ID[evt.agentId];
+    if (!agent) return;
+    if (evt.status === "assigned") {
+      assignTask(agent, evt);
+    } else if (evt.status === "started") {
+      if (!agent.currentTask || agent.currentTask.taskId !== evt.taskId) agent.currentTask = evt;
+      agent.state  = "task_commute";
+      agent.target = { ...agent.desk };
+    } else if (evt.status === "done") {
+      agent.state = "task_done"; agent.notifyColor = "#48d597"; agent.pulse = 1;
+      setBubble(agent, "Tamamlandi ✓", 1400);
+      agent.stateUntil = performance.now() + 1400;
+    } else if (evt.status === "failed") {
+      agent.state = "task_failed"; agent.notifyColor = "#ff6262"; agent.pulse = 1;
+      setBubble(agent, "Takildi ✗", 1400);
+      agent.stateUntil = performance.now() + 1600;
+    }
+    renderStatus();
+  }
+
+  // ── FEED & STATUS ────────────────────────────────────────
   function enqueueFeed(evt) {
     feed.unshift(evt);
     if (feed.length > 40) feed.length = 40;
     renderFeed();
   }
 
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
   function renderFeed() {
     feedEl.innerHTML = "";
-    feed.slice(0, 20).forEach((e) => {
+    feed.slice(0, 20).forEach(e => {
       const li = document.createElement("li");
       const c = STATUS_COLORS[e.status] || "#9bb2cc";
-      li.innerHTML = `<div><b>${e.agentId}</b> ${e.status} - ${escapeHtml(e.title || "task")}</div>
-        <div class="meta"><span style="color:${c}">●</span> ${e.source} | ${new Date(e.timestamp || Date.now()).toLocaleTimeString()}</div>`;
+      li.innerHTML = `<div><b>${esc(e.agentId)}</b> ${esc(e.status)} — ${esc(e.title || "task")}</div>
+        <div class="meta"><span style="color:${c}">●</span> ${esc(e.source)} | ${new Date(e.timestamp || Date.now()).toLocaleTimeString()}</div>`;
       feedEl.appendChild(li);
     });
   }
 
   function renderStatus() {
     statusEl.innerHTML = "";
-    AGENTS.forEach((a) => {
+    AGENTS.forEach(a => {
       const row = document.createElement("div");
       row.className = "agent-row";
+      const sc = a.state.startsWith("task") ? "#ffd166" : "#6dde8a";
       row.innerHTML = `<div>
-        <div class="name">${a.name} <span class="state">(${STATE_LABELS[a.state] || a.state})</span></div>
+        <div class="name" style="color:${a.color}">${a.name} <span class="state">(${STATE_LABELS[a.state] || a.state})</span></div>
         <div class="queue">Queue: ${a.queue.length}</div>
-      </div>
-      <div>${a.role}</div>`;
+      </div><div style="color:${sc};font-size:11px">${a.role}</div>`;
       statusEl.appendChild(row);
     });
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>\"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  }
-
-  function random(arr) {
-    return arr[Math.floor(Math.random() * arr.length)];
-  }
-
-  function pickIdlePoint(agent) {
-    if (Math.random() < 0.22) {
-      return { ...random(loungePoints) };
-    }
-    return { ...random(agent.localWander) };
-  }
-
-  function maybeNearbyChat(agent) {
-    const nearby = AGENTS.filter((a) => a.id !== agent.id && Math.hypot(a.pos.x - agent.pos.x, a.pos.y - agent.pos.y) < 85);
-    if (nearby.length > 0 && Math.random() < 0.35) {
-      setBubble(agent, random(bubbles[agent.id]), 1700);
-      setBubble(random(nearby), "hmm...", 1200);
-      return true;
-    }
-    return false;
-  }
-
-  function scheduleIdle(agent) {
-    const now = performance.now();
-    if (Math.random() < 0.30) {
-      agent.state = "idle_chat";
-      if (!maybeNearbyChat(agent)) {
-        setBubble(agent, random(bubbles[agent.id]));
-      }
-      agent.stateUntil = now + 1400 + Math.random() * 1600;
-      agent.target = null;
-    } else {
-      agent.state = "idle_wander";
-      agent.target = pickIdlePoint(agent);
-      agent.stateUntil = now + 1800 + Math.random() * 2400;
-    }
-  }
-
-  function assignTask(agent, evt) {
-    if (agent.currentTask && agent.currentTask.taskId === evt.taskId) return;
-    if (agent.state === "task_working") {
-      agent.queue.push(evt);
-      return;
-    }
-
-    agent.currentTask = evt;
-    agent.state = "task_notified";
-    agent.notifyColor = SOURCE_COLORS[evt.source] || "#ffd166";
-    agent.pulse = 1;
-    setBubble(agent, `${evt.source}: ${(evt.title || "new task").slice(0, 24)}`, 1600);
-    agent.stateUntil = performance.now() + 900;
-  }
-
-  function applyEvent(evt) {
-    if (!evt || !evt.agentId || !evt.status) return;
-    if (evt.eventId && seenEventIds.has(evt.eventId)) return;
-    if (evt.eventId) seenEventIds.add(evt.eventId);
-    if (evt.timestamp && evt.timestamp > lastEventTs) lastEventTs = evt.timestamp;
-
-    enqueueFeed(evt);
-    const agent = AGENT_BY_ID[evt.agentId];
-    if (!agent) return;
-
-    if (evt.status === "assigned") {
-      assignTask(agent, evt);
-    } else if (evt.status === "started") {
-      if (!agent.currentTask || agent.currentTask.taskId !== evt.taskId) {
-        agent.currentTask = evt;
-      }
-      agent.state = agent.id === "daily" ? "confused" : "task_commute";
-      if (agent.state === "confused") {
-        setBubble(agent, "Bir saniye...", 850);
-        agent.stateUntil = performance.now() + 850;
-      } else {
-        agent.target = { ...agent.desk };
-      }
-    } else if (evt.status === "done") {
-      agent.state = "task_done";
-      agent.notifyColor = "#48d597";
-      agent.pulse = 1;
-      setBubble(agent, "Tamamlandi", 1200);
-      agent.stateUntil = performance.now() + 1300;
-    } else if (evt.status === "failed") {
-      agent.state = "task_failed";
-      agent.notifyColor = "#ff6262";
-      agent.pulse = 1;
-      setBubble(agent, "Takildim", 1300);
-      agent.stateUntil = performance.now() + 1600;
-    }
-
-    renderStatus();
-  }
-
+  // ── MAIN LOOP ────────────────────────────────────────────
   function tick(now) {
-    drawOffice();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    AGENTS.forEach((agent) => {
-      if (agent.pulse > 0) agent.pulse -= 0.012;
+    // Floor
+    ctx.fillStyle = floorPattern;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      if (agent.state === "task_notified" && now >= agent.stateUntil) {
-        agent.state = "task_commute";
-        agent.target = { ...agent.desk };
-      } else if (agent.state === "confused" && now >= agent.stateUntil) {
-        agent.state = "task_commute";
-        agent.target = { ...agent.desk };
-      } else if (agent.state === "task_commute" && agent.target) {
+    // Rooms
+    Object.values(ROOMS).forEach(drawRoom);
+
+    // Furniture
+    drawCEODesk(ROOMS.ceo);
+    drawConference(ROOMS.conference);
+    drawKitchen(ROOMS.kitchen);
+    drawLounge(ROOMS.lounge);
+
+    // Agent desks (non-CEO)
+    AGENTS.forEach(a => {
+      if (a.id === "main") return;
+      const room = Object.values(ROOMS).find(r => r.agentId === a.id);
+      if (room) drawAgentDesk(room.x + room.w * 0.5, room.y + room.h * 0.58, a);
+    });
+
+    // Agents
+    AGENTS.forEach(agent => {
+      if (agent.pulse > 0) agent.pulse -= 0.009;
+      const { state } = agent;
+
+      if (state === "task_notified" && now >= agent.stateUntil) {
+        agent.state = "task_commute"; agent.target = { ...agent.desk };
+      } else if (state === "task_commute" && agent.target) {
         if (moveToward(agent, agent.target)) {
           agent.state = "task_working";
-          agent.stateUntil = now + 2100 + Math.random() * 2200;
-          setBubble(agent, "Calisiyorum", 1300);
+          agent.stateUntil = now + 2200 + Math.random() * 2500;
+          setBubble(agent, "Calisiyorum...", 1300);
         }
-      } else if (agent.state === "task_working" && now >= agent.stateUntil) {
+      } else if (state === "task_working" && now >= agent.stateUntil) {
         applyEvent({
-          eventId: `auto-${Date.now()}-${agent.id}`,
-          taskId: agent.currentTask?.taskId || `task-${Date.now()}`,
-          agentId: agent.id,
-          status: "done",
-          source: agent.currentTask?.source || "openclaw",
-          title: agent.currentTask?.title || "Task",
+          eventId:   `auto-${Date.now()}-${agent.id}`,
+          taskId:    agent.currentTask?.taskId || `task-${Date.now()}`,
+          agentId:   agent.id,
+          status:    "done",
+          source:    agent.currentTask?.source || "openclaw",
+          title:     agent.currentTask?.title  || "Task",
           timestamp: new Date().toISOString()
         });
-      } else if ((agent.state === "task_done" || agent.state === "task_failed") && now >= agent.stateUntil) {
+      } else if ((state === "task_done" || state === "task_failed") && now >= agent.stateUntil) {
         agent.currentTask = null;
-        if (agent.queue.length > 0) {
-          const next = agent.queue.shift();
-          assignTask(agent, next);
-        } else {
-          scheduleIdle(agent);
-        }
-      } else if ((agent.state === "idle_wander" || agent.state === "idle_chat") && now >= agent.stateUntil) {
+        agent.queue.length > 0 ? assignTask(agent, agent.queue.shift()) : scheduleIdle(agent);
+      } else if ((state === "idle_wander" || state === "idle_chat") && now >= agent.stateUntil) {
         scheduleIdle(agent);
       }
 
-      if (agent.state === "idle_wander" && agent.target) moveToward(agent, agent.target);
-      drawAgent(agent, now);
+      if ((state === "idle_wander" || state === "task_commute") && agent.target) {
+        moveToward(agent, agent.target);
+      }
+      drawSprite(agent, now);
     });
 
     requestAnimationFrame(tick);
   }
 
-  function seedIdle() {
-    AGENTS.forEach((a) => scheduleIdle(a));
-    renderStatus();
-  }
+  // ── CONNECTIVITY ─────────────────────────────────────────
+  let evtSource = null;
 
-  async function pollEvents() {
-    const configuredBase = window.OFFICE_CONFIG?.apiBase || "";
-    const apiBase = configuredBase.replace(/\/$/, "");
-    const endpoint = apiBase
-      ? `${apiBase}/api/events?since=${encodeURIComponent(lastEventTs)}`
-      : `/api/events?since=${encodeURIComponent(lastEventTs)}`;
-
+  function connectSSE(apiBase) {
     try {
-      const res = await fetch(endpoint, { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      connPill.textContent = "LIVE";
-      connPill.style.color = "#48d597";
-      (data.events || []).forEach(applyEvent);
-    } catch (_err) {
-      connPill.textContent = "RETRYING";
-      connPill.style.color = "#ffbf69";
-    }
+      evtSource?.close();
+      evtSource = new EventSource(`${apiBase}/events/stream`);
+      evtSource.onopen = () => { connPill.textContent = "LIVE"; connPill.style.color = "#48d597"; };
+      evtSource.onmessage = e => {
+        try { applyEvent(JSON.parse(e.data)); } catch (_) {}
+      };
+      evtSource.onerror = () => {
+        connPill.textContent = "RETRYING"; connPill.style.color = "#ffbf69";
+        evtSource.close(); evtSource = null;
+        setTimeout(() => connectSSE(apiBase), 4000);
+      };
+    } catch (_) {}
   }
 
-  function startPolling() {
-    pollEvents();
-    setInterval(pollEvents, 2000);
+  async function pollBridge(apiBase) {
+    async function poll() {
+      try {
+        const r = await fetch(`${apiBase}/events/recent`, { cache: "no-store" });
+        if (!r.ok) throw new Error(r.status);
+        const { events } = await r.json();
+        connPill.textContent = "LIVE"; connPill.style.color = "#48d597";
+        (events || []).forEach(applyEvent);
+      } catch (_) { connPill.textContent = "RETRYING"; connPill.style.color = "#ffbf69"; }
+    }
+    poll(); setInterval(poll, 2500);
+  }
+
+  async function pollVercel() {
+    async function poll() {
+      try {
+        const r = await fetch(`/api/events?since=${encodeURIComponent(lastEventTs)}`, { cache: "no-store" });
+        if (!r.ok) throw new Error(r.status);
+        const { events } = await r.json();
+        connPill.textContent = "LIVE"; connPill.style.color = "#48d597";
+        (events || []).forEach(applyEvent);
+      } catch (_) { connPill.textContent = "RETRYING"; connPill.style.color = "#ffbf69"; }
+    }
+    poll(); setInterval(poll, 2000);
   }
 
   function demoPulse() {
     const agentIds = ["main", "coder", "marketer", "daily", "kalshi"];
-    const titles = ["New thread", "Code fix", "Campaign tweak", "Schedule task", "Market check"];
+    const titles   = ["New thread", "Code fix", "Campaign tweak", "Schedule task", "Market check"];
     setInterval(() => {
       if (feed.length > 0) return;
-      const agentId = random(agentIds);
-      const source = random(["slack", "telegram"]);
-      const taskId = `${source}-${Date.now()}`;
-      applyEvent({ eventId: `${taskId}-a`, taskId, agentId, source, status: "assigned", title: random(titles), timestamp: new Date().toISOString() });
-      setTimeout(() => applyEvent({ eventId: `${taskId}-s`, taskId, agentId, source, status: "started", title: random(titles), timestamp: new Date().toISOString() }), 450);
-    }, 15000);
+      const agentId = rand(agentIds);
+      const source  = rand(["slack", "telegram", "openclaw"]);
+      const taskId  = `${source}-${Date.now()}`;
+      applyEvent({ eventId: `${taskId}-a`, taskId, agentId, source, status: "assigned", title: rand(titles), timestamp: new Date().toISOString() });
+      setTimeout(() => applyEvent({ eventId: `${taskId}-s`, taskId, agentId, source, status: "started", title: rand(titles), timestamp: new Date().toISOString() }), 500);
+    }, 12000);
   }
 
-  seedIdle();
-  startPolling();
+  // ── INIT ─────────────────────────────────────────────────
+  AGENTS.forEach(scheduleIdle);
+  renderStatus();
+
+  const configuredBase = (window.OFFICE_CONFIG?.apiBase || "").replace(/\/$/, "");
+  if (configuredBase) {
+    connectSSE(configuredBase);
+  } else {
+    pollVercel();
+  }
+
   const params = new URLSearchParams(window.location.search);
   if (params.get("demo") === "1") demoPulse();
+
   requestAnimationFrame(tick);
 })();
