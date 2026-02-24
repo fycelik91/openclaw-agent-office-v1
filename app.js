@@ -6,6 +6,7 @@
   const connPill = document.getElementById("conn-pill");
 
   const SOURCE_COLORS = { slack: "#41c7f4", telegram: "#6dde8a", openclaw: "#ffd166" };
+  const STATUS_COLORS = { assigned: "#ffd166", started: "#64d2ff", done: "#48d597", failed: "#ff6262" };
   const STATE_LABELS = {
     idle_wander: "Idle/Wander",
     idle_chat: "Idle/Chat",
@@ -18,11 +19,51 @@
   };
 
   const AGENTS = [
-    { id: "main", name: "Ekrem", role: "Orchestrator", color: "#f4a261", desk: { x: 250, y: 170 }, pos: { x: 260, y: 210 }, wander: [{ x: 500, y: 330 }, { x: 630, y: 390 }, { x: 360, y: 330 }] },
-    { id: "coder", name: "Mithat", role: "Coder", color: "#7bdff2", desk: { x: 950, y: 160 }, pos: { x: 920, y: 220 }, wander: [{ x: 760, y: 350 }, { x: 870, y: 290 }, { x: 680, y: 420 }] },
-    { id: "marketer", name: "Fikret", role: "Marketer", color: "#ff7f7f", desk: { x: 960, y: 340 }, pos: { x: 920, y: 390 }, wander: [{ x: 760, y: 360 }, { x: 640, y: 330 }, { x: 720, y: 490 }] },
-    { id: "daily", name: "Pelin", role: "Daily", color: "#c2f970", desk: { x: 260, y: 520 }, pos: { x: 300, y: 460 }, wander: [{ x: 500, y: 390 }, { x: 430, y: 470 }, { x: 620, y: 430 }] },
-    { id: "kalshi", name: "Mehmet", role: "Investor", color: "#b19cd9", desk: { x: 970, y: 530 }, pos: { x: 910, y: 500 }, wander: [{ x: 740, y: 540 }, { x: 630, y: 450 }, { x: 820, y: 430 }] }
+    {
+      id: "main",
+      name: "Ekrem",
+      role: "Orchestrator",
+      color: "#f4a261",
+      desk: { x: 250, y: 170 },
+      pos: { x: 260, y: 210 },
+      localWander: [{ x: 230, y: 220 }, { x: 310, y: 240 }, { x: 350, y: 280 }]
+    },
+    {
+      id: "coder",
+      name: "Mithat",
+      role: "Coder",
+      color: "#7bdff2",
+      desk: { x: 955, y: 170 },
+      pos: { x: 920, y: 220 },
+      localWander: [{ x: 890, y: 240 }, { x: 840, y: 290 }, { x: 760, y: 330 }]
+    },
+    {
+      id: "marketer",
+      name: "Fikret",
+      role: "Marketer",
+      color: "#ff7f7f",
+      desk: { x: 965, y: 330 },
+      pos: { x: 920, y: 390 },
+      localWander: [{ x: 880, y: 380 }, { x: 810, y: 420 }, { x: 740, y: 390 }]
+    },
+    {
+      id: "daily",
+      name: "Pelin",
+      role: "Daily",
+      color: "#c2f970",
+      desk: { x: 260, y: 520 },
+      pos: { x: 310, y: 470 },
+      localWander: [{ x: 330, y: 470 }, { x: 420, y: 460 }, { x: 500, y: 430 }]
+    },
+    {
+      id: "kalshi",
+      name: "Mehmet",
+      role: "Investor",
+      color: "#b19cd9",
+      desk: { x: 970, y: 530 },
+      pos: { x: 920, y: 500 },
+      localWander: [{ x: 900, y: 500 }, { x: 830, y: 470 }, { x: 740, y: 500 }]
+    }
   ].map((a) => ({
     ...a,
     state: "idle_wander",
@@ -30,13 +71,14 @@
     currentTask: null,
     bubble: null,
     target: null,
-    speed: 1.25,
+    speed: 1.05,
     stateUntil: 0,
     notifyColor: "#ffd166",
     pulse: 0
   }));
 
   const AGENT_BY_ID = Object.fromEntries(AGENTS.map((a) => [a.id, a]));
+  const loungePoints = [{ x: 560, y: 350 }, { x: 620, y: 390 }, { x: 690, y: 430 }];
 
   const bubbles = {
     main: ["Takim, siradaki is kimde?", "Oncelik: etkisi yuksek isler.", "Bu gorevi en dogru agente verelim."],
@@ -53,41 +95,102 @@
   function isoRect(x, y, w, h, color) {
     ctx.save();
     ctx.translate(x, y);
-    ctx.transform(1, -0.35, 1, 0.35, 0, 0);
+    ctx.transform(1, -0.34, 1, 0.34, 0, 0);
     ctx.fillStyle = color;
     ctx.fillRect(-w / 2, -h / 2, w, h);
     ctx.restore();
   }
 
-  function drawOffice() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    isoRect(640, 390, 1010, 600, "#22364a");
-    isoRect(640, 390, 990, 580, "#2b455d");
+  function isoShadow(x, y, w, h) {
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    isoRect(x + 6, y + 9, w, h, "#000");
+    ctx.restore();
+  }
 
+  function drawWallBand() {
+    ctx.fillStyle = "#1a2a3a";
+    ctx.fillRect(110, 92, 1060, 36);
+    ctx.fillRect(110, 602, 1060, 20);
+    ctx.fillStyle = "#263b50";
+    ctx.fillRect(110, 126, 1060, 8);
+    ctx.fillRect(110, 594, 1060, 6);
+  }
+
+  function drawDecor() {
     const desks = [
-      { x: 240, y: 150, label: "CEO", tone: "#35526d" },
-      { x: 955, y: 145, label: "CODE", tone: "#2f4f6b" },
+      { x: 245, y: 165, label: "CEO", tone: "#35526d" },
+      { x: 955, y: 165, label: "CODE", tone: "#2f4f6b" },
       { x: 965, y: 330, label: "MKT", tone: "#5f425a" },
-      { x: 255, y: 520, label: "OPS", tone: "#4b5a42" },
-      { x: 970, y: 525, label: "TRD", tone: "#51466d" }
+      { x: 260, y: 520, label: "OPS", tone: "#4b5a42" },
+      { x: 970, y: 530, label: "TRD", tone: "#51466d" }
     ];
 
     desks.forEach((d) => {
-      isoRect(d.x, d.y, 120, 60, d.tone);
+      isoShadow(d.x, d.y, 126, 62);
+      isoRect(d.x, d.y, 126, 62, d.tone);
       ctx.fillStyle = "#dce9f9";
       ctx.font = "12px monospace";
       ctx.fillText(d.label, d.x - 18, d.y + 4);
     });
 
-    isoRect(620, 390, 250, 160, "#314d63");
+    // lounge island
+    isoShadow(620, 390, 280, 170);
+    isoRect(620, 390, 280, 170, "#314d63");
     ctx.fillStyle = "#c8d9ee";
     ctx.font = "13px monospace";
     ctx.fillText("LOUNGE", 585, 395);
+
+    // coffee point
+    isoShadow(510, 505, 90, 48);
+    isoRect(510, 505, 90, 48, "#4d5b68");
+    ctx.fillStyle = "#d7e4ef";
+    ctx.fillText("CAFE", 488, 509);
+
+    // plants and props (anchored to ground)
+    [
+      { x: 160, y: 575 },
+      { x: 1115, y: 140 },
+      { x: 1120, y: 585 },
+      { x: 170, y: 135 }
+    ].forEach((p) => {
+      isoShadow(p.x, p.y, 28, 28);
+      isoRect(p.x, p.y, 28, 28, "#2f6f4d");
+    });
+
+    // monitor glows
+    ctx.fillStyle = "#6de2ff33";
+    ctx.fillRect(900, 130, 120, 34);
+    ctx.fillStyle = "#ff8aa233";
+    ctx.fillRect(905, 300, 120, 26);
+    ctx.fillStyle = "#90ffb133";
+    ctx.fillRect(195, 490, 120, 30);
+    ctx.fillStyle = "#c8b0ff33";
+    ctx.fillRect(905, 500, 120, 30);
+  }
+
+  function drawOffice() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // floor base
+    isoRect(640, 390, 1040, 620, "#213548");
+    isoRect(640, 390, 1000, 580, "#2b455d");
+
+    // simple tile cues to remove floating feeling
+    ctx.strokeStyle = "#36556f66";
+    for (let y = 170; y <= 580; y += 34) {
+      ctx.beginPath();
+      ctx.moveTo(160, y);
+      ctx.lineTo(1120, y);
+      ctx.stroke();
+    }
+    drawWallBand();
+    drawDecor();
   }
 
   function drawAgent(agent, now) {
-    const bob = Math.sin(now / 120 + agent.pos.x) * 1.5;
-    const pulse = agent.pulse > 0 ? Math.sin(now / 40) * 3 + 6 : 0;
+    const bob = Math.sin(now / 140 + agent.pos.x) * 1.1;
+    const pulse = agent.pulse > 0 ? Math.sin(now / 45) * 2.5 + 5 : 0;
 
     if (pulse > 0) {
       ctx.beginPath();
@@ -97,7 +200,7 @@
     }
 
     ctx.fillStyle = "#0c141d";
-    ctx.fillRect(agent.pos.x - 6, agent.pos.y + 8, 14, 4);
+    ctx.fillRect(agent.pos.x - 7, agent.pos.y + 8, 15, 4);
 
     ctx.fillStyle = agent.color;
     ctx.fillRect(agent.pos.x - 5, agent.pos.y - 8 + bob, 10, 14);
@@ -116,7 +219,7 @@
 
     if (agent.bubble && agent.bubble.until > now) {
       const text = agent.bubble.text;
-      const w = Math.max(80, text.length * 6 + 10);
+      const w = Math.max(88, text.length * 6 + 10);
       ctx.fillStyle = "#0f1822e0";
       ctx.fillRect(agent.pos.x - w / 2, agent.pos.y - 44, w, 18);
       ctx.fillStyle = "#cfe0f6";
@@ -145,16 +248,17 @@
 
   function enqueueFeed(evt) {
     feed.unshift(evt);
-    if (feed.length > 20) feed.length = 20;
+    if (feed.length > 40) feed.length = 40;
     renderFeed();
   }
 
   function renderFeed() {
     feedEl.innerHTML = "";
-    feed.forEach((e) => {
+    feed.slice(0, 20).forEach((e) => {
       const li = document.createElement("li");
+      const c = STATUS_COLORS[e.status] || "#9bb2cc";
       li.innerHTML = `<div><b>${e.agentId}</b> ${e.status} - ${escapeHtml(e.title || "task")}</div>
-        <div class="meta">${e.source} | ${new Date(e.timestamp || Date.now()).toLocaleTimeString()}</div>`;
+        <div class="meta"><span style="color:${c}">●</span> ${e.source} | ${new Date(e.timestamp || Date.now()).toLocaleTimeString()}</div>`;
       feedEl.appendChild(li);
     });
   }
@@ -181,17 +285,36 @@
     return arr[Math.floor(Math.random() * arr.length)];
   }
 
+  function pickIdlePoint(agent) {
+    if (Math.random() < 0.22) {
+      return { ...random(loungePoints) };
+    }
+    return { ...random(agent.localWander) };
+  }
+
+  function maybeNearbyChat(agent) {
+    const nearby = AGENTS.filter((a) => a.id !== agent.id && Math.hypot(a.pos.x - agent.pos.x, a.pos.y - agent.pos.y) < 85);
+    if (nearby.length > 0 && Math.random() < 0.35) {
+      setBubble(agent, random(bubbles[agent.id]), 1700);
+      setBubble(random(nearby), "hmm...", 1200);
+      return true;
+    }
+    return false;
+  }
+
   function scheduleIdle(agent) {
     const now = performance.now();
-    if (Math.random() < 0.24) {
+    if (Math.random() < 0.30) {
       agent.state = "idle_chat";
-      setBubble(agent, random(bubbles[agent.id]));
-      agent.stateUntil = now + 1700 + Math.random() * 1800;
+      if (!maybeNearbyChat(agent)) {
+        setBubble(agent, random(bubbles[agent.id]));
+      }
+      agent.stateUntil = now + 1400 + Math.random() * 1600;
       agent.target = null;
     } else {
       agent.state = "idle_wander";
-      agent.target = { ...random(agent.wander) };
-      agent.stateUntil = now + 1800 + Math.random() * 2800;
+      agent.target = pickIdlePoint(agent);
+      agent.stateUntil = now + 1800 + Math.random() * 2400;
     }
   }
 
@@ -206,18 +329,15 @@
     agent.state = "task_notified";
     agent.notifyColor = SOURCE_COLORS[evt.source] || "#ffd166";
     agent.pulse = 1;
-    setBubble(agent, `${evt.source}: ${evt.title || "new task"}`.slice(0, 30), 1600);
-    agent.stateUntil = performance.now() + 1000;
+    setBubble(agent, `${evt.source}: ${(evt.title || "new task").slice(0, 24)}`, 1600);
+    agent.stateUntil = performance.now() + 900;
   }
 
   function applyEvent(evt) {
     if (!evt || !evt.agentId || !evt.status) return;
     if (evt.eventId && seenEventIds.has(evt.eventId)) return;
     if (evt.eventId) seenEventIds.add(evt.eventId);
-
-    if (evt.timestamp && evt.timestamp > lastEventTs) {
-      lastEventTs = evt.timestamp;
-    }
+    if (evt.timestamp && evt.timestamp > lastEventTs) lastEventTs = evt.timestamp;
 
     enqueueFeed(evt);
     const agent = AGENT_BY_ID[evt.agentId];
@@ -231,8 +351,8 @@
       }
       agent.state = agent.id === "daily" ? "confused" : "task_commute";
       if (agent.state === "confused") {
-        setBubble(agent, "Bir saniye...", 900);
-        agent.stateUntil = performance.now() + 900;
+        setBubble(agent, "Bir saniye...", 850);
+        agent.stateUntil = performance.now() + 850;
       } else {
         agent.target = { ...agent.desk };
       }
@@ -241,13 +361,13 @@
       agent.notifyColor = "#48d597";
       agent.pulse = 1;
       setBubble(agent, "Tamamlandi", 1200);
-      agent.stateUntil = performance.now() + 1400;
+      agent.stateUntil = performance.now() + 1300;
     } else if (evt.status === "failed") {
       agent.state = "task_failed";
       agent.notifyColor = "#ff6262";
       agent.pulse = 1;
-      setBubble(agent, "Takildim", 1200);
-      agent.stateUntil = performance.now() + 1700;
+      setBubble(agent, "Takildim", 1300);
+      agent.stateUntil = performance.now() + 1600;
     }
 
     renderStatus();
@@ -268,11 +388,11 @@
       } else if (agent.state === "task_commute" && agent.target) {
         if (moveToward(agent, agent.target)) {
           agent.state = "task_working";
-          agent.stateUntil = now + 2200 + Math.random() * 2600;
-          setBubble(agent, "Calisiyorum", 1400);
+          agent.stateUntil = now + 2100 + Math.random() * 2200;
+          setBubble(agent, "Calisiyorum", 1300);
         }
       } else if (agent.state === "task_working" && now >= agent.stateUntil) {
-        const syntheticDone = {
+        applyEvent({
           eventId: `auto-${Date.now()}-${agent.id}`,
           taskId: agent.currentTask?.taskId || `task-${Date.now()}`,
           agentId: agent.id,
@@ -280,8 +400,7 @@
           source: agent.currentTask?.source || "openclaw",
           title: agent.currentTask?.title || "Task",
           timestamp: new Date().toISOString()
-        };
-        applyEvent(syntheticDone);
+        });
       } else if ((agent.state === "task_done" || agent.state === "task_failed") && now >= agent.stateUntil) {
         agent.currentTask = null;
         if (agent.queue.length > 0) {
@@ -309,7 +428,9 @@
   async function pollEvents() {
     const configuredBase = window.OFFICE_CONFIG?.apiBase || "";
     const apiBase = configuredBase.replace(/\/$/, "");
-    const endpoint = apiBase ? `${apiBase}/api/events?since=${encodeURIComponent(lastEventTs)}` : `/api/events?since=${encodeURIComponent(lastEventTs)}`;
+    const endpoint = apiBase
+      ? `${apiBase}/api/events?since=${encodeURIComponent(lastEventTs)}`
+      : `/api/events?since=${encodeURIComponent(lastEventTs)}`;
 
     try {
       const res = await fetch(endpoint, { cache: "no-store" });
@@ -345,8 +466,6 @@
   seedIdle();
   startPolling();
   const params = new URLSearchParams(window.location.search);
-  if (params.get("demo") === "1") {
-    demoPulse();
-  }
+  if (params.get("demo") === "1") demoPulse();
   requestAnimationFrame(tick);
 })();
