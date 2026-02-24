@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenClaw Agent Office v1</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="layout">
+    <section class="stage-wrap">
+      <header class="stage-topbar">
+        <h1>OpenClaw Agent Office v1</h1>
+        <div class="conn-pill" id="conn-pill">CONNECTING</div>
+      </header>
+      <canvas id="office-canvas" width="1280" height="720"></canvas>
+      <div class="hud-overlay">
+        <div class="source-key">
+          <span><i class="dot slack"></i>Slack</span>
+          <span><i class="dot telegram"></i>Telegram</span>
+          <span><i class="dot openclaw"></i>OpenClaw</span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="panel">
+        <h2>Agent Status</h2>
+        <div id="agent-status"></div>
+      </section>
+      <section class="panel">
+        <h2>Live Feed</h2>
+        <ul id="live-feed"></ul>
+      </section>
+    </aside>
+  </main>
+
+  <script>
+    window.OFFICE_CONFIG = {
+      apiBase: window.location.search.includes("api=")
+        ? decodeURIComponent(new URLSearchParams(window.location.search).get("api"))
+        : ""
+    };
+  </script>
+  <script src="./app.js"></script>
+</body>
+</html>
