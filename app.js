@@ -12,9 +12,13 @@
   const SOURCE_COLORS = { slack: "#41c7f4", telegram: "#6dde8a", openclaw: "#ffd166" };
   const STATUS_COLORS  = { assigned: "#ffd166", started: "#64d2ff", done: "#48d597", failed: "#ff6262" };
   const STATE_LABELS   = {
-    idle_desk: "At Desk", idle_wander: "Idle", idle_chat: "Chatting",
+    idle_desk: "At Desk", idle_wander: "Moving", idle_chat: "Chatting",
     task_notified: "Notified", task_commute: "Commuting",
     task_working: "Working", task_done: "Done", task_failed: "Failed"
+  };
+  const ACTIVITY_LABELS = {
+    desk: "At Desk", chat: "Chatting", coffee: "Coffee Break",
+    lounge: "In Lounge", pingpong: "Ping Pong", meeting: "In Meeting"
   };
 
   // ── FLOOR PATTERN (drawn once) ───────────────────────────
@@ -45,12 +49,26 @@
     return { x: 500, y: 360 };
   }
 
-  // Lounge ping-pong positions for wandering agents
+  // ── LOCATIONS ────────────────────────────────────────────
+  // Conference room: cx≈132, cy≈121 (chairs at ±80x, ±46/52y)
+  const CONF_SPOTS = [
+    { x: 70,  y: 115 }, { x: 194, y: 115 },
+    { x: 98,  y: 72  }, { x: 166, y: 72  },
+    { x: 98,  y: 168 }, { x: 166, y: 168 }
+  ];
+  // Kitchen: coffee machine area ~x=627,y=98
+  const KITCHEN_SPOTS = [
+    { x: 628, y: 128 }, { x: 646, y: 134 }, { x: 614, y: 130 }
+  ];
+  // Lounge sofa front row y≈90, coffee table y≈112
+  const LOUNGE_SPOTS = [
+    { x: 1068, y: 90 }, { x: 1102, y: 90 }, { x: 1138, y: 90 }, { x: 1174, y: 90 },
+    { x: 1098, y: 112 }, { x: 1152, y: 112 }
+  ];
+  // Ping pong: table ptX=1036,ptY=176,ptW=208,ptH=100
   const PING_PONG_SPOTS = [
-    { x: 1140, y: 232 },
-    { x: 1140, y: 272 },
-    { x: 1100, y: 252 },
-    { x: 1180, y: 252 },
+    { x: 1140, y: 163 }, { x: 1140, y: 287 },
+    { x: 1040, y: 225 }, { x: 1242, y: 225 }
   ];
 
   // ── AGENTS ───────────────────────────────────────────────
@@ -84,7 +102,8 @@
       speed:       1.3 + Math.random() * 0.2,
       stateUntil:  performance.now() + 3000 + Math.random() * 4000,
       notifyColor: "#ffd166",
-      pulse:       0
+      pulse:       0,
+      activity:    "desk"   // desk | coffee | lounge | pingpong | meeting
     };
   });
 
@@ -395,42 +414,130 @@
     agent.bubble = { text, until: performance.now() + ms };
   }
 
-  function scheduleIdle(agent) {
-    const now = performance.now();
-    const roll = Math.random();
+  // ── ACTIVITY SYSTEM ──────────────────────────────────────
+  // Weighted activities: desk=65%, chat=12%, coffee=10%, lounge=8%, pingpong=5%
+  const ACTIVITIES = [
+    { type: "desk",     weight: 65, minDur: 9000,  maxDur: 18000 },
+    { type: "chat",     weight: 12, minDur: 1500,  maxDur: 3000  },
+    { type: "coffee",   weight: 10, minDur: 7000,  maxDur: 12000 },
+    { type: "lounge",   weight: 8,  minDur: 10000, maxDur: 20000 },
+    { type: "pingpong", weight: 5,  minDur: 12000, maxDur: 22000 },
+  ];
 
-    if (roll < 0.55) {
-      // Return to desk and stay there
+  function pickActivity() {
+    const total = ACTIVITIES.reduce((s, a) => s + a.weight, 0);
+    let r = Math.random() * total;
+    for (const act of ACTIVITIES) { r -= act.weight; if (r <= 0) return act; }
+    return ACTIVITIES[0];
+  }
+
+  const ACTIVITY_ARRIVE_BUBBLES = {
+    coffee:   ["Ah, kahve!", "Tam zamanında.", "Kafein gibi."],
+    lounge:   ["İyi geldi.", "Temiz hava.", "5 dakika."],
+    pingpong: ["Hazır mısın?", "Servis bende!", "Bu sefer kazanıyorum."]
+  };
+
+  const ACTIVITY_GO_BUBBLES = {
+    coffee:   ["Kahve zamanı.", "Kafein lazım.", "Çay alsam mı?"],
+    lounge:   ["Biraz mola.", "5 dakika dinleneyim.", "Nefes alayım."],
+    pingpong: ["Kim oynuyor?", "Ping pong zamanı!", "Çabuk bir maç?"],
+    meeting:  ["Toplantı var.", "Konferans odası.", "Hemen geliyorum."]
+  };
+
+  function scheduleActivity(agent) {
+    // Don't interrupt tasks or meeting participants
+    if (agent.state.startsWith("task")) return;
+    if (agent.activity === "meeting") return;
+
+    const now = performance.now();
+    const act  = pickActivity();
+    const dur  = act.minDur + Math.random() * (act.maxDur - act.minDur);
+
+    agent.activity = act.type;
+
+    if (act.type === "desk") {
+      // Return to desk and stay quietly
       agent.state = "idle_wander";
       agent.target = { ...agent.desk };
-      agent.stateUntil = now + 6000 + Math.random() * 6000;
-    } else if (roll < 0.72) {
-      // Chat bubble at current position
+      agent.stateUntil = now + dur;
+      // Rare quiet work bubble at desk
+      if (Math.random() < 0.18) setBubble(agent, rand(BUBBLES[agent.id]), 1800);
+
+    } else if (act.type === "chat") {
+      // Stay in place, show bubble
       agent.state = "idle_chat";
-      setBubble(agent, rand(BUBBLES[agent.id]));
-      agent.stateUntil = now + 1600 + Math.random() * 1400;
       agent.target = null;
-    } else if (roll < 0.88) {
-      // Small wander within own room then back to desk
+      agent.stateUntil = now + dur;
+      setBubble(agent, rand(BUBBLES[agent.id]));
+
+    } else if (act.type === "coffee") {
       agent.state = "idle_wander";
-      const deskNearby = [
-        { x: agent.desk.x - 20 + Math.random() * 40, y: agent.desk.y + 20 + Math.random() * 20 }
-      ];
-      agent.target = { ...deskNearby[0] };
-      agent.stateUntil = now + 2500 + Math.random() * 1500;
-    } else {
-      // Occasional lounge/ping pong break
+      agent.target = { ...rand(KITCHEN_SPOTS) };
+      agent.stateUntil = now + dur;
+      setBubble(agent, rand(ACTIVITY_GO_BUBBLES.coffee), 2000);
+
+    } else if (act.type === "lounge") {
+      agent.state = "idle_wander";
+      agent.target = { ...rand(LOUNGE_SPOTS) };
+      agent.stateUntil = now + dur;
+      setBubble(agent, rand(ACTIVITY_GO_BUBBLES.lounge), 2000);
+
+    } else if (act.type === "pingpong") {
       agent.state = "idle_wander";
       agent.target = { ...rand(PING_PONG_SPOTS) };
-      agent.stateUntil = now + 4000 + Math.random() * 3000;
+      agent.stateUntil = now + dur;
+      setBubble(agent, rand(ACTIVITY_GO_BUBBLES.pingpong), 2000);
     }
   }
 
-  function transitionToDesk(agent) {
-    agent.state = "idle_desk";
-    agent.target = null;
-    agent.stateUntil = performance.now() + 5000 + Math.random() * 5000;
-    if (Math.random() < 0.15) setBubble(agent, rand(BUBBLES[agent.id]));
+  function returnToDesk(agent) {
+    agent.activity = "desk";
+    agent.state = "idle_wander";
+    agent.target = { ...agent.desk };
+    agent.stateUntil = performance.now() + 9000 + Math.random() * 9000;
+  }
+
+  // ── MEETING SCHEDULER ────────────────────────────────────
+  let meetingActive = false;
+
+  function scheduleMeetings() {
+    function triggerMeeting() {
+      const delay = 70000 + Math.random() * 80000; // every ~2 min
+      setTimeout(() => {
+        if (meetingActive) { triggerMeeting(); return; }
+
+        const available = AGENTS.filter(a => !a.state.startsWith("task") && a.activity !== "meeting");
+        if (available.length < 2) { triggerMeeting(); return; }
+
+        const n = 2 + Math.floor(Math.random() * Math.min(3, available.length - 1));
+        const participants = available.sort(() => Math.random() - 0.5).slice(0, n);
+        const meetingDur = 20000 + Math.random() * 25000;
+        const meetEnd = performance.now() + meetingDur + 6000;
+
+        meetingActive = true;
+
+        const spots = [...CONF_SPOTS].sort(() => Math.random() - 0.5);
+        participants.forEach((agent, i) => {
+          agent.activity = "meeting";
+          agent.state = "idle_wander";
+          agent.target = { ...spots[i % spots.length] };
+          agent.stateUntil = meetEnd;
+          setBubble(agent, rand(ACTIVITY_GO_BUBBLES.meeting), 2200);
+        });
+
+        setTimeout(() => {
+          meetingActive = false;
+          participants.forEach(agent => {
+            if (agent.activity === "meeting" && !agent.state.startsWith("task")) {
+              returnToDesk(agent);
+            }
+          });
+          triggerMeeting();
+        }, meetingDur + 6000);
+
+      }, delay);
+    }
+    triggerMeeting();
   }
 
   function assignTask(agent, evt) {
@@ -510,8 +617,11 @@
       const row = document.createElement("div");
       row.className = "agent-row";
       const sc = a.state.startsWith("task") ? "#ffd166" : "#6dde8a";
+      const stateLabel = a.state.startsWith("task")
+        ? (STATE_LABELS[a.state] || a.state)
+        : (ACTIVITY_LABELS[a.activity] || STATE_LABELS[a.state] || a.state);
       row.innerHTML = `<div>
-        <div class="name" style="color:${a.color}">${a.name} <span class="state">(${STATE_LABELS[a.state] || a.state})</span></div>
+        <div class="name" style="color:${a.color}">${a.name} <span class="state">(${stateLabel})</span></div>
         <div class="queue">Queue: ${a.queue.length}</div>
       </div><div style="color:${sc};font-size:11px">${a.role}</div>`;
       statusEl.appendChild(row);
@@ -557,24 +667,39 @@
         });
       } else if ((state === "task_done" || state === "task_failed") && now >= agent.stateUntil) {
         agent.currentTask = null;
-        agent.queue.length > 0 ? assignTask(agent, agent.queue.shift()) : transitionToDesk(agent);
+        if (agent.queue.length > 0) assignTask(agent, agent.queue.shift());
+        else returnToDesk(agent);
 
       } else if (state === "idle_desk" && now >= agent.stateUntil) {
-        scheduleIdle(agent);
+        if (agent.activity === "meeting") {
+          returnToDesk(agent); // meeting ended, head home
+        } else {
+          scheduleActivity(agent);
+        }
 
       } else if (state === "idle_wander" && agent.target) {
         if (moveToward(agent, agent.target)) {
-          // Arrived at target
-          if (now >= agent.stateUntil) {
-            scheduleIdle(agent);
+          // Arrived at destination
+          agent.target = null;
+          if (now >= agent.stateUntil || agent.activity === "desk") {
+            // Activity time up or this was a desk return → settle
+            agent.state = "idle_desk";
+            agent.stateUntil = now + (agent.activity === "desk"
+              ? 9000 + Math.random() * 10000   // long desk sit
+              : 6000 + Math.random() * 8000);  // activity duration at spot
+            // Arrive bubble for non-desk spots
+            const ab = ACTIVITY_ARRIVE_BUBBLES[agent.activity];
+            if (ab) setBubble(agent, rand(ab), 2500);
           } else {
-            transitionToDesk(agent);
+            // Arrived but stateUntil still in future → settle at spot for remainder
+            agent.state = "idle_desk";
           }
-        } else if (now >= agent.stateUntil) {
-          scheduleIdle(agent);
+        } else if (now >= agent.stateUntil && agent.activity !== "meeting") {
+          // Took too long to reach destination → abort, go back to desk
+          returnToDesk(agent);
         }
       } else if (state === "idle_chat" && now >= agent.stateUntil) {
-        scheduleIdle(agent);
+        scheduleActivity(agent);
       }
 
       drawSprite(agent, now);
@@ -627,6 +752,7 @@
 
   // ── INIT ─────────────────────────────────────────────────
   renderStatus();
+  scheduleMeetings();
   const configuredBase = (window.OFFICE_CONFIG?.apiBase || "").replace(/\/$/, "");
   if (configuredBase) connectSSE(configuredBase);
   else pollVercel();
