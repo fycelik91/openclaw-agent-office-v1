@@ -18,7 +18,8 @@
   };
   const ACTIVITY_LABELS = {
     desk: "At Desk", chat: "Chatting", coffee: "Coffee Break",
-    lounge: "In Lounge", pingpong: "Ping Pong", meeting: "In Meeting"
+    lounge: "In Lounge", pingpong: "Ping Pong", meeting: "In Meeting",
+    corridor: "Walking Corridor"
   };
 
   // ── FLOOR PATTERN (drawn once) ───────────────────────────
@@ -70,6 +71,21 @@
     { x: 1140, y: 163 }, { x: 1140, y: 287 },
     { x: 1040, y: 225 }, { x: 1242, y: 225 }
   ];
+  const CORRIDOR_SPOTS = [
+    { x: 140, y: 236 }, { x: 280, y: 236 }, { x: 420, y: 236 }, { x: 560, y: 236 },
+    { x: 700, y: 236 }, { x: 840, y: 236 }, { x: 980, y: 236 }
+  ];
+  const ROOM_DOORS = {
+    conference: { x: 132, y: 198 },
+    ceo:        { x: 410, y: 218 },
+    kitchen:    { x: 684, y: 198 },
+    code:       { x: 132, y: 258 },
+    mkt:        { x: 380, y: 258 },
+    ops:        { x: 628, y: 258 },
+    trd:        { x: 876, y: 258 },
+    lounge:     { x: 1016, y: 236 }
+  };
+  const CORRIDOR_Y = 236;
 
   // ── AGENTS ───────────────────────────────────────────────
   const AGENT_DEFS = [
@@ -103,7 +119,14 @@
       stateUntil:  performance.now() + 3000 + Math.random() * 4000,
       notifyColor: "#ffd166",
       pulse:       0,
-      activity:    "desk"   // desk | coffee | lounge | pingpong | meeting
+      activity:    "desk",   // desk | coffee | lounge | pingpong | meeting | corridor
+      intent:      "focused_work",
+      statusNote:  "Planning",
+      route:       [],
+      reservedSpot: null,
+      inviteToken: 0,
+      inviteFrom:  null,
+      inviteTo:    null
     };
   });
 
@@ -119,7 +142,7 @@
     ctx.arcTo(x, y, x + r, y, r); ctx.closePath();
   }
 
-  function drawRoom(room) {
+  function drawRoom(roomId, room) {
     ctx.fillStyle = room.bg;
     ctx.fillRect(room.x, room.y, room.w, room.h);
     if (room.agentId === "main") {
@@ -129,12 +152,87 @@
     ctx.strokeStyle = room.lc + "55";
     ctx.lineWidth = 2;
     ctx.strokeRect(room.x + 1, room.y + 1, room.w - 2, room.h - 2);
+
+    const door = ROOM_DOORS[roomId];
+    if (door) {
+      const gap = 30;
+      ctx.fillStyle = "rgba(80, 110, 140, 0.55)";
+      if (Math.abs(door.y - room.y) <= 3) {
+        // top wall door
+        ctx.fillRect(door.x - gap / 2, room.y - 2, gap, 5);
+        ctx.strokeStyle = room.lc + "88";
+        ctx.beginPath();
+        ctx.moveTo(door.x - gap / 2, room.y + 2);
+        ctx.lineTo(door.x - gap / 2, room.y + 8);
+        ctx.moveTo(door.x + gap / 2, room.y + 2);
+        ctx.lineTo(door.x + gap / 2, room.y + 8);
+        ctx.stroke();
+      } else if (Math.abs(door.y - (room.y + room.h)) <= 3) {
+        // bottom wall door
+        ctx.fillRect(door.x - gap / 2, room.y + room.h - 2, gap, 5);
+        ctx.strokeStyle = room.lc + "88";
+        ctx.beginPath();
+        ctx.moveTo(door.x - gap / 2, room.y + room.h - 8);
+        ctx.lineTo(door.x - gap / 2, room.y + room.h - 2);
+        ctx.moveTo(door.x + gap / 2, room.y + room.h - 8);
+        ctx.lineTo(door.x + gap / 2, room.y + room.h - 2);
+        ctx.stroke();
+      } else if (Math.abs(door.x - room.x) <= 3) {
+        // left wall door
+        ctx.fillRect(room.x - 2, door.y - gap / 2, 5, gap);
+        ctx.strokeStyle = room.lc + "88";
+        ctx.beginPath();
+        ctx.moveTo(room.x + 2, door.y - gap / 2);
+        ctx.lineTo(room.x + 8, door.y - gap / 2);
+        ctx.moveTo(room.x + 2, door.y + gap / 2);
+        ctx.lineTo(room.x + 8, door.y + gap / 2);
+        ctx.stroke();
+      } else if (Math.abs(door.x - (room.x + room.w)) <= 3) {
+        // right wall door
+        ctx.fillRect(room.x + room.w - 2, door.y - gap / 2, 5, gap);
+        ctx.strokeStyle = room.lc + "88";
+        ctx.beginPath();
+        ctx.moveTo(room.x + room.w - 8, door.y - gap / 2);
+        ctx.lineTo(room.x + room.w - 2, door.y - gap / 2);
+        ctx.moveTo(room.x + room.w - 8, door.y + gap / 2);
+        ctx.lineTo(room.x + room.w - 2, door.y + gap / 2);
+        ctx.stroke();
+      }
+    }
     const lblW = room.label.length * 8 + 10;
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(room.x + 6, room.y + 4, lblW, 16);
     ctx.fillStyle = room.lc;
     ctx.font = "bold 11px monospace";
     ctx.fillText(room.label, room.x + 9, room.y + 16);
+  }
+
+  function drawCorridors() {
+    ctx.fillStyle = "rgba(50, 70, 90, 0.24)";
+    ctx.fillRect(24, 224, 1240, 24);
+    ctx.fillStyle = "rgba(80, 110, 140, 0.16)";
+    for (let x = 32; x < 1240; x += 38) {
+      ctx.fillRect(x, 233, 20, 6);
+    }
+  }
+
+  function drawDoors() {
+    Object.entries(ROOM_DOORS).forEach(([roomId, d]) => {
+      const portal = doorPortal(roomId);
+      if (portal) {
+        ctx.strokeStyle = "rgba(245, 214, 92, 0.35)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(portal.door.x, portal.door.y);
+        ctx.lineTo(portal.outside.x, portal.outside.y);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "rgba(245, 214, 92, 0.95)";
+      ctx.fillRect(d.x - 11, d.y - 4, 22, 8);
+      ctx.strokeStyle = "rgba(84, 62, 18, 0.9)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(d.x - 11, d.y - 4, 22, 8);
+    });
   }
 
   function drawAgentDesk(cx, cy, agent) {
@@ -145,6 +243,11 @@
     ctx.fillStyle = agent.color; ctx.globalAlpha = 0.65;
     ctx.fillRect(cx - 12, cy - 20, 24, 16); ctx.globalAlpha = 1;
     ctx.fillStyle = "#2a3545"; ctx.fillRect(cx - 3, cy - 2, 6, 4);
+    ctx.fillStyle = "#e6e0d0";
+    ctx.fillRect(cx - 32, cy + 4, 14, 9);
+    ctx.fillRect(cx - 19, cy + 7, 10, 7);
+    ctx.strokeStyle = "#c6bca8"; ctx.lineWidth = 1;
+    ctx.strokeRect(cx - 32, cy + 4, 14, 9);
     ctx.fillStyle = agent.color; ctx.globalAlpha = 0.06;
     ctx.fillRect(cx - 22, cy - 28, 44, 32); ctx.globalAlpha = 1;
     if (agent.id === "coder") {
@@ -399,12 +502,179 @@
   }
 
   // ── STATE MACHINE ────────────────────────────────────────
+  const reservedSpots = new Map();
+  const socialEvents = [];
+
+  function dist(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function roomContains(room, p) {
+    return p.x >= room.x && p.x <= room.x + room.w && p.y >= room.y && p.y <= room.y + room.h;
+  }
+
+  function roomIdOfPoint(p) {
+    // Corridor band is shared space; treat as no-room to enforce hallway routing.
+    if (p.y >= 224 && p.y <= 248) return null;
+    for (const [roomId, room] of Object.entries(ROOMS)) {
+      if (roomContains(room, p)) return roomId;
+    }
+    return null;
+  }
+
+  function corridorIndexNear(p) {
+    let bestIdx = 0;
+    let best = Infinity;
+    CORRIDOR_SPOTS.forEach((c, i) => {
+      const d = dist(c, p);
+      if (d < best) { best = d; bestIdx = i; }
+    });
+    return bestIdx;
+  }
+
+  function dedupeRoute(points) {
+    const out = [];
+    points.forEach((p) => {
+      if (!p) return;
+      const prev = out[out.length - 1];
+      if (!prev || dist(prev, p) > 2) out.push({ x: p.x, y: p.y });
+    });
+    return out;
+  }
+
+  function doorPortal(roomId) {
+    const room = ROOMS[roomId];
+    const door = ROOM_DOORS[roomId];
+    if (!room || !door) return null;
+
+    if (Math.abs(door.y - (room.y + room.h)) <= 3) {
+      return {
+        inside: { x: door.x, y: door.y - 12 },
+        door: { x: door.x, y: door.y },
+        outside: { x: door.x, y: CORRIDOR_Y }
+      };
+    }
+    if (Math.abs(door.y - room.y) <= 3) {
+      return {
+        inside: { x: door.x, y: door.y + 12 },
+        door: { x: door.x, y: door.y },
+        outside: { x: door.x, y: CORRIDOR_Y }
+      };
+    }
+    if (Math.abs(door.x - room.x) <= 3) {
+      return {
+        inside: { x: door.x + 12, y: door.y },
+        door: { x: door.x, y: door.y },
+        outside: { x: 980, y: door.y }
+      };
+    }
+    if (Math.abs(door.x - (room.x + room.w)) <= 3) {
+      return {
+        inside: { x: door.x - 12, y: door.y },
+        door: { x: door.x, y: door.y },
+        outside: { x: 980, y: door.y }
+      };
+    }
+    return null;
+  }
+
+  function buildRoute(from, to) {
+    const fromRoom = roomIdOfPoint(from);
+    const toRoom = roomIdOfPoint(to);
+    if (fromRoom && toRoom && fromRoom === toRoom) return dedupeRoute([to]);
+
+    const points = [];
+    const fromPortal = fromRoom ? doorPortal(fromRoom) : null;
+    const toPortal = toRoom ? doorPortal(toRoom) : null;
+
+    if (fromPortal) {
+      points.push(fromPortal.inside, fromPortal.door, fromPortal.outside);
+    }
+
+    const startAnchor = fromPortal ? fromPortal.outside : from;
+    const endAnchor = toPortal ? toPortal.outside : to;
+    const startIdx = corridorIndexNear(startAnchor);
+    const endIdx = corridorIndexNear(endAnchor);
+    const step = startIdx <= endIdx ? 1 : -1;
+    for (let i = startIdx; i !== endIdx + step; i += step) points.push(CORRIDOR_SPOTS[i]);
+    if (toPortal) points.push(toPortal.outside, toPortal.door, toPortal.inside);
+    points.push(to);
+    return dedupeRoute(points);
+  }
+
+  function startWalk(agent, destination, opts = {}) {
+    agent.route = buildRoute(agent.pos, destination);
+    agent.target = agent.route.shift() || { ...destination };
+    agent.state = opts.state || "idle_wander";
+    if (opts.activity) agent.activity = opts.activity;
+    if (opts.intent) agent.intent = opts.intent;
+    if (opts.statusNote) agent.statusNote = opts.statusNote;
+    if (opts.until) agent.stateUntil = opts.until;
+  }
+
+  function isSociallyAvailable(agent) {
+    if (!agent) return false;
+    if (agent.state.startsWith("task")) return false;
+    if (agent.activity === "meeting") return false;
+    if (agent.inviteFrom || agent.inviteTo) return false;
+    return true;
+  }
+
+  function reserveSpot(zone, spots, agentId, preferred = null) {
+    const order = preferred === null
+      ? spots.map((_, i) => i)
+      : [preferred, ...spots.map((_, i) => i).filter((i) => i !== preferred)];
+    for (const idx of order) {
+      const key = `${zone}:${idx}`;
+      if (!reservedSpots.has(key) || reservedSpots.get(key) === agentId) {
+        reservedSpots.set(key, agentId);
+        return { key, spot: { ...spots[idx] } };
+      }
+    }
+    return null;
+  }
+
+  function releaseSpot(agent) {
+    if (!agent?.reservedSpot) return;
+    reservedSpots.delete(agent.reservedSpot);
+    agent.reservedSpot = null;
+  }
+
+  function pushSocialEvent(agentId, title) {
+    socialEvents.unshift({
+      eventId: `social-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      taskId: `social-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      agentId,
+      status: "social",
+      source: "office",
+      title,
+      timestamp: new Date().toISOString()
+    });
+    if (socialEvents.length > 80) socialEvents.length = 80;
+    renderFeed();
+  }
+
   function moveToward(agent, target) {
     const dx = target.x - agent.pos.x, dy = target.y - agent.pos.y;
     const dist = Math.hypot(dx, dy);
     if (dist <= agent.speed) { agent.pos.x = target.x; agent.pos.y = target.y; return true; }
-    agent.pos.x += (dx / dist) * agent.speed;
-    agent.pos.y += (dy / dist) * agent.speed;
+    let vx = (dx / dist) * agent.speed;
+    let vy = (dy / dist) * agent.speed;
+    for (const other of AGENTS) {
+      if (other.id === agent.id) continue;
+      const ox = agent.pos.x - other.pos.x;
+      const oy = agent.pos.y - other.pos.y;
+      const od = Math.hypot(ox, oy);
+      if (od < 18 && od > 0.01) {
+        const rep = (18 - od) * 0.04;
+        vx += (ox / od) * rep;
+        vy += (oy / od) * rep;
+      }
+    }
+    const v = Math.hypot(vx, vy) || 1;
+    const scale = Math.min(1, agent.speed / v);
+    agent.pos.x += vx * scale;
+    agent.pos.y += vy * scale;
     return false;
   }
 
@@ -415,86 +685,213 @@
   }
 
   // ── ACTIVITY SYSTEM ──────────────────────────────────────
-  // Weighted activities: desk=65%, chat=12%, coffee=10%, lounge=8%, pingpong=5%
+  // Weighted activities tuned per role for more realistic office rhythm.
   const ACTIVITIES = [
-    { type: "desk",     weight: 65, minDur: 9000,  maxDur: 18000 },
-    { type: "chat",     weight: 12, minDur: 1500,  maxDur: 3000  },
-    { type: "coffee",   weight: 10, minDur: 7000,  maxDur: 12000 },
-    { type: "lounge",   weight: 8,  minDur: 10000, maxDur: 20000 },
-    { type: "pingpong", weight: 5,  minDur: 12000, maxDur: 22000 },
+    { type: "desk",     minDur: 9000,  maxDur: 18000 },
+    { type: "chat",     minDur: 1500,  maxDur: 3200  },
+    { type: "coffee",   minDur: 7000,  maxDur: 12000 },
+    { type: "lounge",   minDur: 10000, maxDur: 20000 },
+    { type: "pingpong", minDur: 12000, maxDur: 22000 },
+    { type: "corridor", minDur: 5000,  maxDur: 11000 }
   ];
+  const ACTIVITY_PROFILES = {
+    main:     { desk: 52, chat: 12, coffee: 10, lounge: 7,  pingpong: 4, corridor: 15 },
+    coder:    { desk: 60, chat: 8,  coffee: 12, lounge: 6,  pingpong: 4, corridor: 10 },
+    marketer: { desk: 42, chat: 18, coffee: 10, lounge: 10, pingpong: 8, corridor: 12 },
+    daily:    { desk: 45, chat: 15, coffee: 11, lounge: 8,  pingpong: 5, corridor: 16 },
+    kalshi:   { desk: 50, chat: 10, coffee: 9,  lounge: 7,  pingpong: 8, corridor: 16 }
+  };
 
-  function pickActivity() {
-    const total = ACTIVITIES.reduce((s, a) => s + a.weight, 0);
+  function pickActivity(agent) {
+    const profile = ACTIVITY_PROFILES[agent.id] || ACTIVITY_PROFILES.main;
+    const weighted = ACTIVITIES.map((a) => ({ ...a, weight: profile[a.type] || 0 }));
+    const total = weighted.reduce((s, a) => s + a.weight, 0);
     let r = Math.random() * total;
-    for (const act of ACTIVITIES) { r -= act.weight; if (r <= 0) return act; }
-    return ACTIVITIES[0];
+    for (const act of weighted) { r -= act.weight; if (r <= 0) return act; }
+    return weighted[0];
   }
 
   const ACTIVITY_ARRIVE_BUBBLES = {
     coffee:   ["Ah, kahve!", "Tam zamanında.", "Kafein gibi."],
     lounge:   ["İyi geldi.", "Temiz hava.", "5 dakika."],
-    pingpong: ["Hazır mısın?", "Servis bende!", "Bu sefer kazanıyorum."]
+    pingpong: ["Hazır mısın?", "Servis bende!", "Bu sefer kazanıyorum."],
+    corridor: ["Bir tur iyi geldi.", "Koridor trafiği yoğun.", "Nefes açıldı."]
   };
 
   const ACTIVITY_GO_BUBBLES = {
     coffee:   ["Kahve zamanı.", "Kafein lazım.", "Çay alsam mı?"],
     lounge:   ["Biraz mola.", "5 dakika dinleneyim.", "Nefes alayım."],
     pingpong: ["Kim oynuyor?", "Ping pong zamanı!", "Çabuk bir maç?"],
-    meeting:  ["Toplantı var.", "Konferans odası.", "Hemen geliyorum."]
+    corridor: ["Koridorda tur atayım.", "Bir check yapıp döneyim.", "Kısa bir yürüyüş."],
+    meeting:  ["Toplantı var.", "Konferans odası.", "Hemen geliyorum."],
+    invite:   ["Bir maç var mısın?", "Ping pong?", "2 dakika oynayalım mı?"],
+    accept:   ["Olur, geliyorum.", "Tamam, hadi.", "Olur, bir set."]
   };
 
+  function clearSocialIntent(agent) {
+    agent.inviteToken += 1;
+    agent.inviteFrom = null;
+    agent.inviteTo = null;
+    agent.intent = "focused_work";
+  }
+
+  function reserveAndWalk(agent, zone, spots, options) {
+    releaseSpot(agent);
+    const pick = reserveSpot(zone, spots, agent.id, options?.preferred ?? null);
+    const destination = pick?.spot || { ...rand(spots) };
+    if (pick) agent.reservedSpot = pick.key;
+    startWalk(agent, destination, options);
+  }
+
+  function nearestInviteCandidate(agent) {
+    return AGENTS
+      .filter((a) => a.id !== agent.id && isSociallyAvailable(a))
+      .sort((a, b) => dist(a.pos, agent.pos) - dist(b.pos, agent.pos))[0] || null;
+  }
+
+  function startPingPongInvite(agent, until) {
+    const partner = nearestInviteCandidate(agent);
+    if (!partner || dist(agent.pos, partner.pos) > 340) {
+      reserveAndWalk(agent, "pingpong", PING_PONG_SPOTS, {
+        activity: "pingpong",
+        intent: "solo_pingpong",
+        statusNote: "Heading to Ping Pong",
+        until
+      });
+      setBubble(agent, rand(ACTIVITY_GO_BUBBLES.pingpong), 2000);
+      return;
+    }
+
+    const token = ++agent.inviteToken;
+    agent.inviteTo = partner.id;
+    agent.activity = "chat";
+    agent.intent = "invite_pingpong";
+    agent.statusNote = `Inviting ${partner.name}`;
+    agent.state = "idle_chat";
+    agent.stateUntil = performance.now() + 2000;
+    setBubble(agent, rand(ACTIVITY_GO_BUBBLES.invite), 2100);
+
+    partner.inviteFrom = agent.id;
+    partner.activity = "chat";
+    partner.intent = "responding_invite";
+    partner.statusNote = `Replying to ${agent.name}`;
+    partner.state = "idle_chat";
+    partner.stateUntil = performance.now() + 2000;
+    setBubble(partner, rand(ACTIVITY_GO_BUBBLES.accept), 1900);
+
+    pushSocialEvent(agent.id, `${agent.name} invited ${partner.name} to ping pong`);
+
+    setTimeout(() => {
+      if (agent.inviteToken !== token) return;
+      if (!isSociallyAvailable(partner) || partner.inviteFrom !== agent.id) {
+        clearSocialIntent(agent);
+        returnToDesk(agent);
+        return;
+      }
+
+      const acceptChance = 0.82;
+      if (Math.random() > acceptChance) {
+        setBubble(partner, "Sonra oynayalım.", 1600);
+        clearSocialIntent(agent);
+        clearSocialIntent(partner);
+        returnToDesk(agent);
+        returnToDesk(partner);
+        return;
+      }
+
+      clearSocialIntent(agent);
+      clearSocialIntent(partner);
+      reserveAndWalk(agent, "pingpong", PING_PONG_SPOTS, {
+        preferred: 0,
+        activity: "pingpong",
+        intent: `pingpong_with_${partner.id}`,
+        statusNote: `Walking with ${partner.name}`,
+        until
+      });
+      reserveAndWalk(partner, "pingpong", PING_PONG_SPOTS, {
+        preferred: 1,
+        activity: "pingpong",
+        intent: `pingpong_with_${agent.id}`,
+        statusNote: `Walking with ${agent.name}`,
+        until
+      });
+      setBubble(agent, "Hadi başlayalım.", 1600);
+      setBubble(partner, "Geliyorum.", 1600);
+      pushSocialEvent(agent.id, `${agent.name} and ${partner.name} started ping pong`);
+    }, 1600);
+  }
+
   function scheduleActivity(agent) {
-    // Don't interrupt tasks or meeting participants
     if (agent.state.startsWith("task")) return;
     if (agent.activity === "meeting") return;
 
     const now = performance.now();
-    const act  = pickActivity();
+    const act  = pickActivity(agent);
     const dur  = act.minDur + Math.random() * (act.maxDur - act.minDur);
 
     agent.activity = act.type;
 
     if (act.type === "desk") {
-      // Return to desk and stay quietly
-      agent.state = "idle_wander";
-      agent.target = { ...agent.desk };
-      agent.stateUntil = now + dur;
-      // Rare quiet work bubble at desk
+      startWalk(agent, { ...agent.desk }, {
+        activity: "desk",
+        intent: "focused_work",
+        statusNote: "Heading to Desk",
+        until: now + dur
+      });
       if (Math.random() < 0.18) setBubble(agent, rand(BUBBLES[agent.id]), 1800);
 
     } else if (act.type === "chat") {
-      // Stay in place, show bubble
+      releaseSpot(agent);
       agent.state = "idle_chat";
       agent.target = null;
       agent.stateUntil = now + dur;
+      agent.intent = "small_talk";
+      agent.statusNote = "Small Talk";
       setBubble(agent, rand(BUBBLES[agent.id]));
 
     } else if (act.type === "coffee") {
-      agent.state = "idle_wander";
-      agent.target = { ...rand(KITCHEN_SPOTS) };
-      agent.stateUntil = now + dur;
+      reserveAndWalk(agent, "kitchen", KITCHEN_SPOTS, {
+        activity: "coffee",
+        intent: "coffee_break",
+        statusNote: "Going for Coffee",
+        until: now + dur
+      });
       setBubble(agent, rand(ACTIVITY_GO_BUBBLES.coffee), 2000);
 
     } else if (act.type === "lounge") {
-      agent.state = "idle_wander";
-      agent.target = { ...rand(LOUNGE_SPOTS) };
-      agent.stateUntil = now + dur;
+      reserveAndWalk(agent, "lounge", LOUNGE_SPOTS, {
+        activity: "lounge",
+        intent: "lounge_break",
+        statusNote: "Going to Lounge",
+        until: now + dur
+      });
       setBubble(agent, rand(ACTIVITY_GO_BUBBLES.lounge), 2000);
 
     } else if (act.type === "pingpong") {
-      agent.state = "idle_wander";
-      agent.target = { ...rand(PING_PONG_SPOTS) };
-      agent.stateUntil = now + dur;
-      setBubble(agent, rand(ACTIVITY_GO_BUBBLES.pingpong), 2000);
+      startPingPongInvite(agent, now + dur);
+
+    } else if (act.type === "corridor") {
+      releaseSpot(agent);
+      startWalk(agent, { ...rand(CORRIDOR_SPOTS) }, {
+        activity: "corridor",
+        intent: "corridor_walk",
+        statusNote: "Walking Corridor",
+        until: now + dur
+      });
+      setBubble(agent, rand(ACTIVITY_GO_BUBBLES.corridor), 1800);
     }
   }
 
   function returnToDesk(agent) {
+    releaseSpot(agent);
+    clearSocialIntent(agent);
     agent.activity = "desk";
-    agent.state = "idle_wander";
-    agent.target = { ...agent.desk };
-    agent.stateUntil = performance.now() + 9000 + Math.random() * 9000;
+    startWalk(agent, { ...agent.desk }, {
+      activity: "desk",
+      intent: "focused_work",
+      statusNote: "Returning to Desk",
+      until: performance.now() + 9000 + Math.random() * 9000
+    });
   }
 
   // ── MEETING SCHEDULER ────────────────────────────────────
@@ -518,10 +915,16 @@
 
         const spots = [...CONF_SPOTS].sort(() => Math.random() - 0.5);
         participants.forEach((agent, i) => {
+          releaseSpot(agent);
+          clearSocialIntent(agent);
           agent.activity = "meeting";
-          agent.state = "idle_wander";
-          agent.target = { ...spots[i % spots.length] };
-          agent.stateUntil = meetEnd;
+          reserveAndWalk(agent, "conference", spots, {
+            preferred: i % spots.length,
+            activity: "meeting",
+            intent: "meeting_walk",
+            statusNote: "Going to Meeting",
+            until: meetEnd
+          });
           setBubble(agent, rand(ACTIVITY_GO_BUBBLES.meeting), 2200);
         });
 
@@ -543,6 +946,13 @@
   function assignTask(agent, evt) {
     if (agent.currentTask?.taskId === evt.taskId) return;
     if (agent.state === "task_working") { agent.queue.push(evt); return; }
+    releaseSpot(agent);
+    clearSocialIntent(agent);
+    agent.route = [];
+    agent.target = null;
+    agent.activity = "desk";
+    agent.intent = "task_ack";
+    agent.statusNote = "Task Incoming";
     agent.currentTask = evt;
     agent.state = "task_notified";
     agent.notifyColor = SOURCE_COLORS[evt.source] || "#ffd166";
@@ -578,14 +988,21 @@
       assignTask(agent, evt);
     } else if (evt.status === "started") {
       if (!agent.currentTask || agent.currentTask.taskId !== evt.taskId) agent.currentTask = evt;
-      agent.state = "task_commute";
-      agent.target = { ...agent.desk };
+      agent.statusNote = "Commuting to Desk";
+      startWalk(agent, { ...agent.desk }, {
+        state: "task_commute",
+        activity: "desk",
+        intent: "task_commute",
+        until: performance.now() + 5000
+      });
     } else if (evt.status === "done") {
       agent.state = "task_done"; agent.notifyColor = "#48d597"; agent.pulse = 1;
+      agent.statusNote = "Task Completed";
       setBubble(agent, "Tamamlandi ✓", 1400);
       agent.stateUntil = performance.now() + 1400;
     } else if (evt.status === "failed") {
       agent.state = "task_failed"; agent.notifyColor = "#ff6262"; agent.pulse = 1;
+      agent.statusNote = "Task Blocked";
       setBubble(agent, "Takildi ✗", 1400);
       agent.stateUntil = performance.now() + 1600;
     }
@@ -597,14 +1014,15 @@
   }
 
   function renderFeed() {
-    // Sort taskMap values by timestamp desc, show 20 most recent
-    const items = Array.from(taskMap.values())
+    // Merge task feed with lightweight social feed.
+    const taskItems = Array.from(taskMap.values());
+    const items = taskItems.concat(socialEvents)
       .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))
       .slice(0, 20);
     feedEl.innerHTML = "";
     items.forEach(e => {
       const li = document.createElement("li");
-      const c  = STATUS_COLORS[e.status] || "#9bb2cc";
+      const c  = e.status === "social" ? "#9bb2cc" : (STATUS_COLORS[e.status] || "#9bb2cc");
       li.innerHTML = `<div><b>${esc(e.agentId)}</b> — ${esc(e.title || "task")}</div>
         <div class="meta"><span style="color:${c}">● ${esc(e.status)}</span> · ${esc(e.source)} · ${new Date(e.timestamp || Date.now()).toLocaleTimeString()}</div>`;
       feedEl.appendChild(li);
@@ -619,7 +1037,7 @@
       const sc = a.state.startsWith("task") ? "#ffd166" : "#6dde8a";
       const stateLabel = a.state.startsWith("task")
         ? (STATE_LABELS[a.state] || a.state)
-        : (ACTIVITY_LABELS[a.activity] || STATE_LABELS[a.state] || a.state);
+        : (a.statusNote || ACTIVITY_LABELS[a.activity] || STATE_LABELS[a.state] || a.state);
       row.innerHTML = `<div>
         <div class="name" style="color:${a.color}">${a.name} <span class="state">(${stateLabel})</span></div>
         <div class="queue">Queue: ${a.queue.length}</div>
@@ -636,7 +1054,9 @@
     // Refresh sidebar every 800ms to reflect activity changes
     if (now - lastStatusRender > 800) { renderStatus(); lastStatusRender = now; }
     ctx.fillStyle = floorPattern; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    Object.values(ROOMS).forEach(drawRoom);
+    drawCorridors();
+    Object.entries(ROOMS).forEach(([roomId, room]) => drawRoom(roomId, room));
+    drawDoors();
     drawCEODesk(ROOMS.ceo);
     drawConference(ROOMS.conference);
     drawKitchen(ROOMS.kitchen);
@@ -652,13 +1072,25 @@
       const {state} = agent;
 
       if (state === "task_notified" && now >= agent.stateUntil) {
-        agent.state = "task_commute"; agent.target = { ...agent.desk };
+        startWalk(agent, { ...agent.desk }, {
+          state: "task_commute",
+          activity: "desk",
+          intent: "task_commute",
+          statusNote: "Commuting to Desk",
+          until: now + 5000
+        });
 
       } else if (state === "task_commute" && agent.target) {
         if (moveToward(agent, agent.target)) {
-          agent.state = "task_working";
-          agent.stateUntil = now + 2200 + Math.random() * 2500;
-          setBubble(agent, "Calisiyorum...", 1300);
+          if (agent.route.length > 0) {
+            agent.target = agent.route.shift();
+          } else {
+            agent.target = null;
+            agent.state = "task_working";
+            agent.stateUntil = now + 2200 + Math.random() * 2500;
+            agent.statusNote = "Working";
+            setBubble(agent, "Calisiyorum...", 1300);
+          }
         }
       } else if (state === "task_working" && now >= agent.stateUntil) {
         applyEvent({
@@ -675,31 +1107,29 @@
         else returnToDesk(agent);
 
       } else if (state === "idle_desk" && now >= agent.stateUntil) {
-        if (agent.activity === "meeting") {
-          returnToDesk(agent); // meeting ended, head home
+        if (agent.activity === "meeting" || agent.activity === "corridor" || agent.activity === "coffee" || agent.activity === "lounge" || agent.activity === "pingpong") {
+          returnToDesk(agent);
         } else {
           scheduleActivity(agent);
         }
 
       } else if (state === "idle_wander" && agent.target) {
         if (moveToward(agent, agent.target)) {
-          // Arrived at destination
-          agent.target = null;
-          if (now >= agent.stateUntil || agent.activity === "desk") {
-            // Activity time up or this was a desk return → settle
-            agent.state = "idle_desk";
-            agent.stateUntil = now + (agent.activity === "desk"
-              ? 9000 + Math.random() * 10000   // long desk sit
-              : 6000 + Math.random() * 8000);  // activity duration at spot
-            // Arrive bubble for non-desk spots
-            const ab = ACTIVITY_ARRIVE_BUBBLES[agent.activity];
-            if (ab) setBubble(agent, rand(ab), 2500);
+          if (agent.route.length > 0) {
+            agent.target = agent.route.shift();
           } else {
-            // Arrived but stateUntil still in future → settle at spot for remainder
+            agent.target = null;
             agent.state = "idle_desk";
+            agent.statusNote = ACTIVITY_LABELS[agent.activity] || "At Desk";
+            if (now >= agent.stateUntil || agent.activity === "desk") {
+              agent.stateUntil = now + (agent.activity === "desk"
+                ? 9000 + Math.random() * 10000
+                : 6000 + Math.random() * 8000);
+              const ab = ACTIVITY_ARRIVE_BUBBLES[agent.activity];
+              if (ab) setBubble(agent, rand(ab), 2500);
+            }
           }
         } else if (now >= agent.stateUntil && agent.activity !== "meeting") {
-          // Took too long to reach destination → abort, go back to desk
           returnToDesk(agent);
         }
       } else if (state === "idle_chat" && now >= agent.stateUntil) {
