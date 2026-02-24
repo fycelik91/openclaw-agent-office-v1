@@ -876,7 +876,7 @@
 
     setTimeout(() => {
       if (agent.inviteToken !== token) return;
-      if (!isSociallyAvailable(partner) || partner.inviteFrom !== agent.id) {
+      if (partner.inviteFrom !== agent.id || partner.state.startsWith("task")) {
         clearSocialIntent(agent);
         returnToDesk(agent);
         return;
@@ -1264,11 +1264,12 @@
               const lines = VISIT_DIALOGUES[agent.id]?.[agent.visitTarget];
               if (lines && host) {
                 agent.statusNote = `With ${host.name}`;
-                setBubble(agent, rand(lines.visitor), 4000);
+                const visitorLine = rand(lines.visitor);
+                setBubble(agent, visitorLine, 4000);
                 setTimeout(() => {
                   if (agent.activity === "visit") setBubble(host, rand(lines.host), 3000);
                 }, 1200);
-                pushSocialEvent(agent.id, `${agent.name} → ${host.name}: ${lines.visitor[0].slice(0, 32)}`);
+                pushSocialEvent(agent.id, `${agent.name} → ${host.name}: ${visitorLine.slice(0, 32)}`);
               }
               agent.visitTarget = null;
             }
