@@ -715,7 +715,7 @@
   const ACTIVITIES = [
     { type: "desk",     minDur: 9000,  maxDur: 18000 },
     { type: "chat",     minDur: 1500,  maxDur: 3200  },
-    { type: "visit",    minDur: 6000,  maxDur: 10000 },
+    { type: "visit",    minDur: 10000, maxDur: 16000 },
     { type: "coffee",   minDur: 7000,  maxDur: 12000 },
     { type: "lounge",   minDur: 10000, maxDur: 20000 },
     { type: "pingpong", minDur: 12000, maxDur: 22000 },
@@ -960,7 +960,9 @@
       }
       const targetAgent = AGENT_BY_ID[targetId];
       agent.visitTarget = targetId;
-      startWalk(agent, getDeskPos(targetId), {
+      const vDeskP = getDeskPos(targetId);
+      const visitPos = { x: vDeskP.x + 30, y: vDeskP.y + 10 };
+      startWalk(agent, visitPos, {
         activity: "visit",
         intent: "visit_colleague",
         statusNote: `Visiting ${targetAgent.name}`,
@@ -1004,6 +1006,7 @@
   function returnToDesk(agent) {
     releaseSpot(agent);
     clearSocialIntent(agent);
+    agent.visitTarget = null;
     agent.activity = "desk";
     startWalk(agent, { ...agent.desk }, {
       activity: "desk",
@@ -1251,10 +1254,12 @@
             agent.target = null;
             agent.state = "idle_desk";
             agent.statusNote = ACTIVITY_LABELS[agent.activity] || "At Desk";
-            if (now >= agent.stateUntil || agent.activity === "desk") {
-              agent.stateUntil = now + (agent.activity === "desk"
-                ? 9000 + Math.random() * 10000
-                : 6000 + Math.random() * 8000);
+            if (now >= agent.stateUntil || agent.activity === "desk" || agent.activity === "pingpong") {
+              agent.stateUntil = now + (
+                agent.activity === "desk"     ? 9000 + Math.random() * 10000 :
+                agent.activity === "pingpong" ? 12000 + Math.random() * 8000 :
+                                                6000 + Math.random() * 8000
+              );
               const ab = ACTIVITY_ARRIVE_BUBBLES[agent.activity];
               if (ab) setBubble(agent, rand(ab), 2500);
             }
