@@ -276,7 +276,7 @@
           eventId: `auto-${Date.now()}-${agent.id}`,
           taskId: agent.currentTask?.taskId || `task-${Date.now()}`,
           agentId: agent.id,
-          status: Math.random() < 0.86 ? "done" : "failed",
+          status: "done",
           source: agent.currentTask?.source || "openclaw",
           title: agent.currentTask?.title || "Task",
           timestamp: new Date().toISOString()
@@ -344,6 +344,9 @@
 
   seedIdle();
   startPolling();
-  demoPulse();
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("demo") === "1") {
+    demoPulse();
+  }
   requestAnimationFrame(tick);
 })();
