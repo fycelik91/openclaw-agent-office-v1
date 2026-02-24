@@ -19,7 +19,7 @@
   const ACTIVITY_LABELS = {
     desk: "At Desk", chat: "Chatting", coffee: "Coffee Break",
     lounge: "In Lounge", pingpong: "Ping Pong", meeting: "In Meeting",
-    corridor: "Walking Corridor"
+    corridor: "Walking Corridor", visit: "Visiting"
   };
 
   // ── FLOOR PATTERN (drawn once) ───────────────────────────
@@ -97,11 +97,36 @@
   ];
 
   const BUBBLES = {
-    main:     ["Öncelik: yüksek etki.", "Bu görevi kime versek?", "Takım ne yapıyor?", "Plan hazır mı?"],
-    coder:    ["Build yeşil.", "Loglar şüpheli...", "Deploy öncesi kontrol.", "Test geçti ✓"],
-    marketer: ["CTR bugün iyi.", "Bu kreatif güçlü.", "Retention trendine bakalım.", "A/B testi hazır."],
-    daily:    ["Notlar nerede?", "Takvim bende, kahve sende?", "Hallediyorum...", "Hatırlatıcı kurdum."],
-    kalshi:   ["Volatilite yükseliyor.", "Risk/ödül oranı?", "Bu giriş için erken.", "Pozisyon açıldı."]
+    main: [
+      "Sprint planı hazır mı?", "Bugün 3 kritik delivery var.", "Kalshi raporu bekliyorum.",
+      "Fikret'ten update lazım.", "Q4 roadmap'e bakalım.", "Bu hafta release var.",
+      "Mithat deploy ne zaman?", "Ekip ilerlemesini kontrol edeyim.", "Risk burada yüksek.",
+      "Pelin takvimi düzenlesin.", "Öncelikler değişti bildireyim.", "Blocker ne, kim halleder?"
+    ],
+    coder: [
+      "OpenClaw v2.1 bugfix hazır.", "Memory leak var bakıyorum.", "API latency 340ms — yüksek.",
+      "CI pipeline kırmızıya döndü.", "OpenClaw'a yeni endpoint ekledim.", "Test coverage %78 artırmalı.",
+      "Şu PR'a review lazım.", "Build yeşil, deploy hazır.", "Migration scripti test ediyorum.",
+      "Loglar şüpheli bir şey var.", "Staging'de dene önce.", "Rollback planı hazır."
+    ],
+    marketer: [
+      "Aura D0 ROAS 1.4x — hedefin altında.", "US D180 alarm veriyor.", "Bugün kampanya açmam lazım.",
+      "United States segmenti kötü gidiyor.", "CTR bu hafta 3.2%.", "Q4 bütçe revizyonu gerekiyor.",
+      "Retention cohort düştü.", "Yeni kreatif seti A/B'ye girecek.", "CPI arttı kontrol etmeli.",
+      "LTV hesabı güncelliyorum.", "Kampanya durduruldu mu?", "Bid strateji değişecek."
+    ],
+    daily: [
+      "Yiğit'in takvimi bu hafta dolup taştı.", "3 toplantı çakışıyor.", "Ajanda güncellendi.",
+      "Pazar günü delivery var.", "4 task hâlâ pending.", "Toplantı notu hazır.",
+      "Calendar sync tamamlandı.", "Hatırlatıcı kurdum.", "Ekip notları paylaştım.",
+      "Slack duyurusu çıktı.", "Perşembe slot açık mı?", "Brief onaylandı, devam."
+    ],
+    kalshi: [
+      "BTC koridor kırıyor.", "Kalshi spread genişliyor.", "FOMC bu hafta dikkat.",
+      "D180 trend aşağı.", "Risk limiti %12.", "Bu maç Cumartesi kapanıyor.",
+      "Shortu kapatalım mı?", "Pozisyon açıldı.", "Volatilite yükseliyor.",
+      "Momentum zayıf bekleyelim.", "EV pozitif mi kontrol et.", "Likidite düşük sakın."
+    ]
   };
 
   const AGENTS = AGENT_DEFS.map(def => {
@@ -125,8 +150,9 @@
       route:       [],
       reservedSpot: null,
       inviteToken: 0,
-      inviteFrom:  null,
-      inviteTo:    null
+      inviteFrom:   null,
+      inviteTo:     null,
+      visitTarget:  null
     };
   });
 
@@ -689,18 +715,85 @@
   const ACTIVITIES = [
     { type: "desk",     minDur: 9000,  maxDur: 18000 },
     { type: "chat",     minDur: 1500,  maxDur: 3200  },
+    { type: "visit",    minDur: 6000,  maxDur: 10000 },
     { type: "coffee",   minDur: 7000,  maxDur: 12000 },
     { type: "lounge",   minDur: 10000, maxDur: 20000 },
     { type: "pingpong", minDur: 12000, maxDur: 22000 },
     { type: "corridor", minDur: 5000,  maxDur: 11000 }
   ];
   const ACTIVITY_PROFILES = {
-    main:     { desk: 52, chat: 12, coffee: 10, lounge: 7,  pingpong: 4, corridor: 15 },
-    coder:    { desk: 60, chat: 8,  coffee: 12, lounge: 6,  pingpong: 4, corridor: 10 },
-    marketer: { desk: 42, chat: 18, coffee: 10, lounge: 10, pingpong: 8, corridor: 12 },
-    daily:    { desk: 45, chat: 15, coffee: 11, lounge: 8,  pingpong: 5, corridor: 16 },
-    kalshi:   { desk: 50, chat: 10, coffee: 9,  lounge: 7,  pingpong: 8, corridor: 16 }
+    main:     { desk: 58, chat: 4,  visit: 4,  coffee: 10, lounge: 7,  pingpong: 4, corridor: 13 },
+    coder:    { desk: 52, chat: 4,  visit: 12, coffee: 12, lounge: 6,  pingpong: 4, corridor: 10 },
+    marketer: { desk: 38, chat: 6,  visit: 18, coffee: 10, lounge: 10, pingpong: 6, corridor: 12 },
+    daily:    { desk: 40, chat: 5,  visit: 18, coffee: 11, lounge: 8,  pingpong: 4, corridor: 14 },
+    kalshi:   { desk: 48, chat: 4,  visit: 14, coffee: 9,  lounge: 7,  pingpong: 8, corridor: 10 }
   };
+
+  // ── VISIT DIALOGUES ──────────────────────────────────────
+  const VISIT_DIALOGUES = {
+    daily: {
+      main: {
+        visitor: ["Yiğit'in takvimi çok yoğun ya Ekrem!", "Bu hafta 5 toplantı üst üste var.", "Toplantıları hafifletelim mi?", "Birini iptal etsek olur mu?"],
+        host:    ["Haklısın, bak düzenle.", "Hangisi kesilebilir?", "Yarın birlikte değerlendirelim.", "Teşekkürler, hallederiz."]
+      },
+      coder: {
+        visitor: ["Mithat, brief için onay lazım.", "Task'ı bugün bitirebilir misin?", "Deadline Cuma, ne durumda?"],
+        host:    ["Bakıyorum hemen.", "Yarım saat içinde biterim.", "Şu an blocker var birazdan."]
+      }
+    },
+    marketer: {
+      main: {
+        visitor: ["Ekrem, Aura D0 ROAS düştü ciddi.", "United States D180 çok kötü gidiyor.", "Bugün yeni kampanya açmam şart.", "US'e bütçe artıralım mı?"],
+        host:    ["Ne kadar bütçe gerekiyor?", "Onaylıyorum, bugün aç.", "Bütçeye birlikte bakalım.", "Bugün halledelim bunu."]
+      },
+      daily: {
+        visitor: ["Pelin, kampanya kick-off takvime giriyor.", "Salı ne zaman uygun sence?", "Launch tarihi netleşsin istiyorum."],
+        host:    ["Salı öğleden sonra müsait.", "Takvime ekliyorum şimdi.", "Perşembe daha iyi olabilir."]
+      },
+      coder: {
+        visitor: ["Mithat, tracking pixel çalışıyor mu?", "Dashboard'da yeni metrik göremiyorum.", "Aura API çağrıları yavaş geliyor."],
+        host:    ["Bakıyorum, pixel güncellendi.", "Dashboard cache sorunu var düzeltiyorum.", "Rate limit artırdım test et."]
+      }
+    },
+    coder: {
+      main: {
+        visitor: ["Ekrem, OpenClaw'ı güncellesek mi?", "Yeni endpoint için onay lazım.", "Deploy ne zaman planlıyoruz?", "Memory spike var, bugün bakayım mı?"],
+        host:    ["Evet güncelle, hazırız.", "Bu hafta içinde deploy.", "Devam et, onaylıyorum.", "Kritikse bugün bak elbette."]
+      },
+      marketer: {
+        visitor: ["Fikret, Aura API rate limit artırdım.", "Tracking pixel güncellendi bilgin olsun.", "Dashboard'a yeni metrik ekledim."],
+        host:    ["Harika, hemen test edeyim.", "Tam istediğim buydu, teşekkürler.", "Süper, takip ediyorum."]
+      }
+    },
+    kalshi: {
+      main: {
+        visitor: ["Ekrem, BTC pozisyonu kapatalım mı?", "Spread genişledi, dikkat et.", "Risk %12'yi geçti Ekrem.", "FOMC öncesi stop koy derim."],
+        host:    ["Şimdi mi kapatalım?", "Biraz daha bekleyelim.", "Risk yönetimi doğru yapıyorsun.", "Tamam, yapıyorum."]
+      }
+    }
+  };
+
+  // ── MEETING BUBBLES ───────────────────────────────────────
+  const MEETING_BUBBLES = {
+    main:     ["Sprint planını konuşalım.", "Bu hafta 3 delivery var.", "Öncelikler değişti.", "Q4 hedef tutulabilir mi?", "Engel ne, kim çözecek?"],
+    coder:    ["Deploy blocker çözdüm.", "Kod review 2 gün sürer.", "Şu API sorunu kritik.", "Migration planı hazır.", "Test otomasyon geliyor."],
+    marketer: ["D0 ROAS hedef 2.0x.", "US pazarı D180'de düşüyor.", "Kampanya bütçesi revize.", "CTR için yeni kreatif lazım.", "Q4 spend planı hazır mı?"],
+    daily:    ["Takvim dolu bu hafta.", "3 toplantı çakışıyor.", "Ajanda güncellendi.", "Yiğit Perşembe müsait.", "Slack duyurusu çıktı."],
+    kalshi:   ["Market bu hafta oynak.", "Kalshi spread büyüdü.", "Pozisyon azaltalım mı?", "FOMC reaksiyonu yok henüz.", "Risk limiti aşılmasın."]
+  };
+
+  // ── PING PONG PLAY BUBBLES ────────────────────────────────
+  const PINGPONG_PLAY_BUBBLES = [
+    "Servis bende!", "Ayyy kaçırdım!", "Bu sefer kazanıyorum!",
+    "Deuce!", "Harika vuruş!", "Offfff!", "2-1 bende.",
+    "Son set bu!", "Match point!", "Dur dur tekrar!", "Net değil mi?"
+  ];
+
+  // ── MEETING END BUBBLES ───────────────────────────────────
+  const MEETING_END_BUBBLES = [
+    "Verimli oldu.", "Yarın devam.", "Aksiyon maddeleri net.",
+    "İyi toplantıydı.", "Hallettik.", "Notları paylaşıyorum.", "Güzel kararlar çıktı."
+  ];
 
   function pickActivity(agent) {
     const profile = ACTIVITY_PROFILES[agent.id] || ACTIVITY_PROFILES.main;
@@ -712,20 +805,22 @@
   }
 
   const ACTIVITY_ARRIVE_BUBBLES = {
-    coffee:   ["Ah, kahve!", "Tam zamanında.", "Kafein gibi."],
-    lounge:   ["İyi geldi.", "Temiz hava.", "5 dakika."],
-    pingpong: ["Hazır mısın?", "Servis bende!", "Bu sefer kazanıyorum."],
-    corridor: ["Bir tur iyi geldi.", "Koridor trafiği yoğun.", "Nefes açıldı."]
+    coffee:   ["Ah, kahve!", "Tam zamanında.", "Kafein gibi.", "Günkü ikinci.", "Bu olmasa olmaz."],
+    lounge:   ["İyi geldi.", "Temiz hava.", "5 dakika.", "Gerekliydi bu.", "Zihin açıldı."],
+    pingpong: ["Hazır mısın?", "Servis bende!", "Bu sefer kazanıyorum.", "Saha hazır."],
+    corridor: ["Bir tur iyi geldi.", "Koridor trafiği yoğun.", "Nefes açıldı."],
+    visit:    ["Merhaba!", "Bir dakikan var mı?", "Konuşabilir miyiz?", "Seninle bir şey paylaşacaktım."]
   };
 
   const ACTIVITY_GO_BUBBLES = {
-    coffee:   ["Kahve zamanı.", "Kafein lazım.", "Çay alsam mı?"],
-    lounge:   ["Biraz mola.", "5 dakika dinleneyim.", "Nefes alayım."],
-    pingpong: ["Kim oynuyor?", "Ping pong zamanı!", "Çabuk bir maç?"],
-    corridor: ["Koridorda tur atayım.", "Bir check yapıp döneyim.", "Kısa bir yürüyüş."],
-    meeting:  ["Toplantı var.", "Konferans odası.", "Hemen geliyorum."],
-    invite:   ["Bir maç var mısın?", "Ping pong?", "2 dakika oynayalım mı?"],
-    accept:   ["Olur, geliyorum.", "Tamam, hadi.", "Olur, bir set."]
+    coffee:   ["Kahve zamanı.", "Kafein lazım.", "Çay alsam mı?", "Bir kahve hak ettim.", "Beyin durdu."],
+    lounge:   ["Biraz mola.", "5 dakika dinleneyim.", "Nefes alayım.", "Kısa mola şart."],
+    pingpong: ["Kim oynuyor?", "Ping pong zamanı!", "Çabuk bir maç?", "Meydan okuyorum!"],
+    corridor: ["Koridorda tur atayım.", "Bir check yapıp döneyim.", "Bacaklar uyuştu."],
+    meeting:  ["Toplantı var.", "Konferans odası.", "Hemen geliyorum.", "Yola çıkıyorum."],
+    invite:   ["Bir maç var mısın?", "Ping pong?", "2 dakika oynayalım mı?", "Hızlı bir set?"],
+    accept:   ["Olur, geliyorum.", "Tamam, hadi.", "Olur, bir set.", "Kabul!"],
+    visit:    ["Ekrem'e uğrayayım.", "Bunu konuşmam lazım.", "Hızlı bir şey soracağım.", "Bir güncelleme vereyim."]
   };
 
   function clearSocialIntent(agent) {
@@ -752,13 +847,11 @@
   function startPingPongInvite(agent, until) {
     const partner = nearestInviteCandidate(agent);
     if (!partner || dist(agent.pos, partner.pos) > 340) {
-      reserveAndWalk(agent, "pingpong", PING_PONG_SPOTS, {
-        activity: "pingpong",
-        intent: "solo_pingpong",
-        statusNote: "Heading to Ping Pong",
-        until
+      reserveAndWalk(agent, "lounge", LOUNGE_SPOTS, {
+        activity: "lounge", intent: "lounge_break",
+        statusNote: "Going to Lounge", until
       });
-      setBubble(agent, rand(ACTIVITY_GO_BUBBLES.pingpong), 2000);
+      setBubble(agent, "Ping pong için kimse yok...", 2000);
       return;
     }
 
@@ -849,6 +942,32 @@
       agent.statusNote = "Small Talk";
       setBubble(agent, rand(BUBBLES[agent.id]));
 
+    } else if (act.type === "visit") {
+      const visitDialogues = VISIT_DIALOGUES[agent.id];
+      let targetId = null;
+      if (visitDialogues) {
+        const possibleTargets = Object.keys(visitDialogues);
+        if (possibleTargets.length > 0) {
+          if (visitDialogues["main"] && Math.random() < 0.60) {
+            targetId = "main";
+          } else {
+            targetId = rand(possibleTargets);
+          }
+        }
+      }
+      if (!targetId) {
+        targetId = rand(AGENTS.filter(a => a.id !== agent.id)).id;
+      }
+      const targetAgent = AGENT_BY_ID[targetId];
+      agent.visitTarget = targetId;
+      startWalk(agent, getDeskPos(targetId), {
+        activity: "visit",
+        intent: "visit_colleague",
+        statusNote: `Visiting ${targetAgent.name}`,
+        until: now + dur
+      });
+      setBubble(agent, rand(ACTIVITY_GO_BUBBLES.visit), 2000);
+
     } else if (act.type === "coffee") {
       reserveAndWalk(agent, "kitchen", KITCHEN_SPOTS, {
         activity: "coffee",
@@ -932,7 +1051,8 @@
           meetingActive = false;
           participants.forEach(agent => {
             if (agent.activity === "meeting" && !agent.state.startsWith("task")) {
-              returnToDesk(agent);
+              setBubble(agent, rand(MEETING_END_BUBBLES), 2500);
+              setTimeout(() => returnToDesk(agent), 1200);
             }
           });
           triggerMeeting();
@@ -1106,8 +1226,18 @@
         if (agent.queue.length > 0) assignTask(agent, agent.queue.shift());
         else returnToDesk(agent);
 
+      } else if (state === "idle_desk" && now < agent.stateUntil) {
+        // Periodic ambient speech (probabilistic per frame)
+        if (agent.activity === "meeting" && Math.random() < 0.003) {
+          setBubble(agent, rand(MEETING_BUBBLES[agent.id] || MEETING_BUBBLES.main), 3500);
+        } else if (agent.activity === "pingpong" && Math.random() < 0.004) {
+          setBubble(agent, rand(PINGPONG_PLAY_BUBBLES), 2800);
+        } else if (agent.activity === "desk" && Math.random() < 0.0015) {
+          setBubble(agent, rand(BUBBLES[agent.id]), 2200);
+        }
+
       } else if (state === "idle_desk" && now >= agent.stateUntil) {
-        if (agent.activity === "meeting" || agent.activity === "corridor" || agent.activity === "coffee" || agent.activity === "lounge" || agent.activity === "pingpong") {
+        if (["meeting","corridor","coffee","lounge","pingpong","visit"].includes(agent.activity)) {
           returnToDesk(agent);
         } else {
           scheduleActivity(agent);
@@ -1127,6 +1257,20 @@
                 : 6000 + Math.random() * 8000);
               const ab = ACTIVITY_ARRIVE_BUBBLES[agent.activity];
               if (ab) setBubble(agent, rand(ab), 2500);
+            }
+            // Visit arrival: fire two-sided conversation
+            if (agent.activity === "visit" && agent.visitTarget) {
+              const host = AGENT_BY_ID[agent.visitTarget];
+              const lines = VISIT_DIALOGUES[agent.id]?.[agent.visitTarget];
+              if (lines && host) {
+                agent.statusNote = `With ${host.name}`;
+                setBubble(agent, rand(lines.visitor), 4000);
+                setTimeout(() => {
+                  if (agent.activity === "visit") setBubble(host, rand(lines.host), 3000);
+                }, 1200);
+                pushSocialEvent(agent.id, `${agent.name} → ${host.name}: ${lines.visitor[0].slice(0, 32)}`);
+              }
+              agent.visitTarget = null;
             }
           }
         } else if (now >= agent.stateUntil && agent.activity !== "meeting") {
