@@ -629,8 +629,12 @@
   }
 
   // ── MAIN LOOP ────────────────────────────────────────────
+  let lastStatusRender = 0;
+
   function tick(now) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Refresh sidebar every 800ms to reflect activity changes
+    if (now - lastStatusRender > 800) { renderStatus(); lastStatusRender = now; }
     ctx.fillStyle = floorPattern; ctx.fillRect(0, 0, canvas.width, canvas.height);
     Object.values(ROOMS).forEach(drawRoom);
     drawCEODesk(ROOMS.ceo);
